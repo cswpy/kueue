@@ -4,7 +4,6 @@ import (
 	"fmt"
 	kueued "kueue/internal"
 	"kueue/internal/logging"
-	_ "kueue/internal/logging"
 	"sync"
 
 	"github.com/sirupsen/logrus"
@@ -130,4 +129,14 @@ func (c *Controller) selectReplicas(brokerIDs []string, leader string, replicati
 		}
 	}
 	return replicas
+}
+
+// sendHeartbeat sends heartbeats to all brokers.
+func (c *Controller) sendHeartbeat() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for _, broker := range c.Metadata.BrokerInfos {
+
+	}
 }

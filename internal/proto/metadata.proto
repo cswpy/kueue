@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+option go_package = "github.com/kueue/internal/proto";
+
+// Producer sends the topic name to create/get the topic info at controller
+message ProducerTopicInfoRequest {
+	string topic = 1;
+}
+
+message ProducerTopicInfoResponse {
+	map
+}
