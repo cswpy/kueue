@@ -7,6 +7,12 @@ message ProducerTopicInfoRequest {
 	string topic = 1;
 }
 
+// Controller sends the all the brokers who host the topic-partitions
 message ProducerTopicInfoResponse {
-	map
+	repeated NodeInfo brokers = 1;
+}
+
+message NodeInfo {
+	string address = 1;
+	uint32 port = 2;
 }
