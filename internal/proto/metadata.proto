@@ -1,18 +1,55 @@
+// These definitions are used for controller and broker to send control-plane messages,
+// updating and sending metadata, like topic, partition, and broker information.
+
 syntax = "proto3";
 
-option go_package = "github.com/kueue/internal/proto";
+option go_package = "kueue/internal/proto";
+
+service ControllerService {
+  rpc GetTopicProducer (ProducerTopicInfoRequest) returns (ProducerTopicInfoResponse);
+  rpc GetTopicConsumer (ConsumerTopicInfoRequest) returns (ConsumerTopicInfoResponse);
+}
 
 // Producer sends the topic name to create/get the topic info at controller
 message ProducerTopicInfoRequest {
-	string topic = 1;
+	string topic_name = 1;
 }
 
 // Controller sends the all the brokers who host the topic-partitions
 message ProducerTopicInfoResponse {
-	repeated NodeInfo brokers = 1;
+	repeated PartitionMetadata partitions = 1;
 }
+
+message PartitionMetadata {
+	string partition_id = 1;
+	NodeInfo leader = 2;
+}
+
+message ConsumerTopicInfoRequest {
+	string topic_name = 1;          // The name of the topic the consumer wants to consume from
+	string consumer_id = 2;         // Unique identifier for the consumer
+}
+  
+// The MQ determines which partition a consumer should read from
+message ConsumerTopicInfoResponse {
+	string topic_name = 1;
+	string partition_id = 2;
+	NodeInfo broker = 3;
+ }
 
 message NodeInfo {
 	string address = 1;
 	uint32 port = 2;
 }
+
+service BrokerService {
+	rpc Heartbeat (HeartbeatRequest) returns (HeartbeatResponse);
+}
+
+message HeartbeatRequest {
+	string broker_id = 1;
+}
+
+message HeartbeatResponse {
+}
+  

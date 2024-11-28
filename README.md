@@ -2,6 +2,10 @@
 
 This project is developed for the course CPSC 526 Distributed Systems at Yale University.
 
+## Compiling protobuf and generate gRPC service code
+
+Install all required dependencies by running `go mod tidy`, then run `Makefile` after updating the proto files.
+
 ## Structure
 
 ```
