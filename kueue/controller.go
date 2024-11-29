@@ -1,26 +1,32 @@
-package controller
+package kueue
 
 import (
+	"context"
 	"fmt"
-	kueued "kueue/internal"
-	"kueue/internal/logging"
+	proto "kueue/kueue/proto"
+	"slices"
 	"sync"
+	"time"
+
+	"maps"
 
 	"github.com/sirupsen/logrus"
 )
 
 // Controller manages metadata for the MQ cluster.
 type Controller struct {
-	mu       sync.RWMutex // Ensures thread-safe access to metadata
-	Metadata *Metadata    // Stores cluster metadata
+	proto.UnimplementedControllerServiceServer
+	mu           sync.RWMutex // Ensures thread-safe access to metadata
+	Metadata     *Metadata    // Stores cluster metadata
+	BrokerStatus map[string]time.Time
 }
 
 // NewController initializes a new Controller.
 func NewController(controllerID string) *Controller {
 	return &Controller{
 		Metadata: &Metadata{
-			BrokerInfos:  make(map[string]*kueued.BrokerInfo),
-			TopicInfos:   make(map[string]*kueued.TopicInfo),
+			BrokerInfos:  make(map[string]*BrokerInfo),
+			TopicInfos:   make(map[string]*TopicInfo),
 			ControllerID: controllerID,
 		},
 	}
@@ -33,21 +39,21 @@ func (c *Controller) RegisterBroker(brokerName, address string) error {
 
 	// Check if the broker already exists
 	if _, exists := c.Metadata.BrokerInfos[brokerName]; exists {
-		logrus.WithField("Topic", logging.DController).Warnf("Broker %s is already registered.", brokerName)
+		logrus.WithField("Topic", DController).Warnf("Broker %s is already registered.", brokerName)
 		return nil
 	}
 
 	// Add the broker to the metadata
-	c.Metadata.BrokerInfos[brokerName] = &kueued.BrokerInfo{
+	c.Metadata.BrokerInfos[brokerName] = &BrokerInfo{
 		BrokerName: brokerName,
-		NodeInfo: kueued.NodeInfo{
+		NodeInfo: NodeInfo{
 			Address: address,
 			Port:    9092,
 		},
-		HostedTopics:     make(map[string]*kueued.TopicInfo),
-		HostedPartitions: make(map[string]*kueued.PartitionInfo),
+		HostedTopics:     make(map[string]*TopicInfo),
+		HostedPartitions: make(map[string]*PartitionInfo),
 	}
-	logrus.WithField("Topic", logging.DController).Infof("Broker %s registered at %s.", brokerName, address)
+	logrus.WithField("Topic", DController).Infof("Broker %s registered at %s.", brokerName, address)
 	return nil
 }
 
@@ -59,14 +65,14 @@ func (c *Controller) CreateTopic(topicName string, partitionCount int, replicati
 	// Check if the topic already exists
 	if _, exists := c.Metadata.TopicInfos[topicName]; exists {
 		err := fmt.Errorf("Topic %s already exists.", topicName)
-		logrus.WithField("Topic", logging.DController).Warnf(err.Error())
+		logrus.WithField("Topic", DController).Warnf(err.Error())
 		return err
 	}
 
 	// Create the topic and partitions
-	topic := &kueued.TopicInfo{
+	topic := &TopicInfo{
 		TopicName:         topicName,
-		TopicPartitions:   make(map[int]*kueued.PartitionInfo, partitionCount),
+		TopicPartitions:   make(map[int]*PartitionInfo, partitionCount),
 		ReplicationFactor: replicationFactor,
 		LeaderPartitionID: -1,
 	}
@@ -75,7 +81,7 @@ func (c *Controller) CreateTopic(topicName string, partitionCount int, replicati
 	brokerIDs := c.getActiveBrokerIDs()
 	if len(brokerIDs) == 0 {
 		err := fmt.Errorf("No active brokers available to assign partitions for topic %s", topicName)
-		logrus.WithField("Topic", logging.DController).Errorf(err.Error())
+		logrus.WithField("Topic", DController).Errorf(err.Error())
 		return err
 	}
 
@@ -83,7 +89,7 @@ func (c *Controller) CreateTopic(topicName string, partitionCount int, replicati
 		leaderBroker := brokerIDs[i%len(brokerIDs)]
 		//replicas := c.selectReplicas(brokerIDs, leaderBroker, replicationFactor)
 		partitionID := fmt.Sprintf("%s-%d", topicName, i)
-		partition := &kueued.PartitionInfo{
+		partition := &PartitionInfo{
 			PartitionID: partitionID,
 			IsLeader:    true,
 		}
@@ -109,15 +115,29 @@ func (c *Controller) GetMetadata() *Metadata {
 	return c.Metadata
 }
 
+// Heartbeat updates the broker's health status.
+func (c *Controller) Heartbeat(ctx context.Context, req *proto.HeartbeatRequest) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Update broker health status
+	brokerName := req.BrokerId
+	if _, exists := c.Metadata.BrokerInfos[brokerName]; exists {
+		c.BrokerStatus[brokerName] = time.Now()
+		logrus.WithField("Topic", DController).Infof("Broker %s is healthy.", brokerName)
+	} else {
+		err := fmt.Errorf("Broker %s not found.", brokerName)
+		logrus.WithField("Topic", DController).Errorf(err.Error())
+		return err
+	}
+	return nil
+}
+
 // getActiveBrokerIDs returns a list of active broker IDs.
 func (c *Controller) getActiveBrokerIDs() []string {
-	brokerIDs := []string{}
-	for id, broker := range c.Metadata.BrokerInfos {
-		if broker.IsHealthy {
-			brokerIDs = append(brokerIDs, id)
-		}
-	}
-	return brokerIDs
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Collect(maps.Keys(c.BrokerStatus))
 }
 
 // selectReplicas selects brokers for replicas, ensuring the leader is included.
@@ -129,14 +149,4 @@ func (c *Controller) selectReplicas(brokerIDs []string, leader string, replicati
 		}
 	}
 	return replicas
-}
-
-// sendHeartbeat sends heartbeats to all brokers.
-func (c *Controller) sendHeartbeat() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	for _, broker := range c.Metadata.BrokerInfos {
-
-	}
 }

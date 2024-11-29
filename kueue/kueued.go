@@ -1,9 +1,8 @@
-package internal
+package kueue
 
 type BrokerInfo struct {
 	BrokerName       string // unique name of the broker
 	NodeInfo         NodeInfo
-	IsHealthy        bool
 	HostedTopics     map[string]*TopicInfo     // topic name to topic
 	HostedPartitions map[string]*PartitionInfo // partition id to partition
 }

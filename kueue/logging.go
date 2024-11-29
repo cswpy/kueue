@@ -1,4 +1,4 @@
-package logging
+package kueue
 
 const (
 	DController string = "CTRL"

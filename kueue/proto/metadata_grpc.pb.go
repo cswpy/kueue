@@ -5,7 +5,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.5.1
 // - protoc             v5.27.3
-// source: internal/proto/metadata.proto
+// source: kueue/proto/metadata.proto
 
 package proto
 
@@ -158,7 +158,7 @@ var ControllerService_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "internal/proto/metadata.proto",
+	Metadata: "kueue/proto/metadata.proto",
 }
 
 const (
@@ -260,5 +260,5 @@ var BrokerService_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "internal/proto/metadata.proto",
+	Metadata: "kueue/proto/metadata.proto",
 }
