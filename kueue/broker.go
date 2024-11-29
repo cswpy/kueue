@@ -15,7 +15,7 @@ type Broker struct {
 	conn           *grpc.ClientConn
 }
 
-func MakeBroker(info *BrokerInfo, controllerInfo string) (*Broker, error) {
+func NewBroker(info *BrokerInfo, controllerInfo string) (*Broker, error) {
 	var opts []grpc.DialOption
 	opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 

@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+option go_package = "kueue/kueue/proto";
+
+service BrokerService {
+  rpc ProduceMessage (ProduceRequest) returns (ProduceResponse);
+  rpc ConsumeMessage (ConsumeRequest) returns (ConsumeResponse);
+  // rpc ReplicateMessage (ReplicateRequest) returns (ReplicateResponse); // Not implemented yet
+}
+
+// Producer sends a ProduceRequest to the Broker
+message ProduceRequest {
+  string topic_name = 1;
+  string producer_id = 2;
+  string partition_id = 3;
+  string key = 4;
+  string value = 5;
+}
+  
+message ProduceResponse {
+  string topic_name = 1;
+  int32 base_offset = 2;
+}
+
+message ConsumeRequest {
+  string topic_name = 1;
+  string consumer_id = 2;
+}
+
+message ConsumeResponse {
+  string topic_name = 1;
+  repeated Record records = 2;
+}
+
+message Record {
+  int64 offset = 1;
+  int64 timestamp = 2;
+  string key = 3;
+  string value = 4;
+}

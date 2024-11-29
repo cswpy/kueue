@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+option go_package = "kueue/kueue/proto";
+
+service ControllerService {
+  rpc GetTopicProducer (ProducerTopicInfoRequest) returns (ProducerTopicInfoResponse);
+  rpc GetTopicConsumer (ConsumerTopicInfoRequest) returns (ConsumerTopicInfoResponse);
+  rpc Heartbeat (HeartbeatRequest) returns (HeartbeatResponse);
+}
+
+message ProducerTopicInfoRequest {
+  string topic_name = 1;
+}
+
+message ProducerTopicInfoResponse {
+  repeated PartitionMetadata partitions = 1;
+}
+
+message PartitionMetadata {
+  string partition_id = 1;
+  string leader_address = 2;
+}
+
+message ConsumerTopicInfoRequest {
+  string topic_name = 1;
+  string consumer_id = 2;
+}
+
+message ConsumerTopicInfoResponse {
+  string topic_name = 1;
+  string partition_id = 2;
+  string broker_address = 3;
+}
+
+message HeartbeatRequest {
+  string broker_id = 1;
+}
+
+message HeartbeatResponse {}
+

@@ -14,7 +14,7 @@ import (
 var (
 	brokerServiceAddr = flag.String(
 		"broker-address",
-		"127.0.0.1:8080",
+		"127.0.0.1:8081",
 		"host ip address of the broker service in the format of host:port",
 	)
 	brokerName = flag.String(
@@ -52,7 +52,7 @@ func main() {
 		HostedPartitions: make(map[string]*kueue.PartitionInfo),
 	}
 
-	broker, err := kueue.MakeBroker(bi, *controllerAddr)
+	broker, err := kueue.NewBroker(bi, *controllerAddr)
 
 	if err != nil {
 		logrus.Fatalf("Failed to create broker: %v", err)

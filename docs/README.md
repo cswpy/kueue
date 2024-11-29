@@ -16,3 +16,4 @@ sequenceDiagram
     B1->>B2: Replicate message
     destroy B2
 ```
+
