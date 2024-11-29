@@ -2,14 +2,9 @@ package kueue
 
 type BrokerInfo struct {
 	BrokerName       string // unique name of the broker
-	NodeInfo         NodeInfo
+	NodeAddr         string
 	HostedTopics     map[string]*TopicInfo     // topic name to topic
 	HostedPartitions map[string]*PartitionInfo // partition id to partition
-}
-
-type NodeInfo struct {
-	Address string `json:"address"`
-	Port    int32  `json:"port"`
 }
 
 type PartitionInfo struct {

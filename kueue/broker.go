@@ -9,16 +9,17 @@ import (
 )
 
 type Broker struct {
+	proto.UnimplementedBrokerServiceServer
 	Info           *BrokerInfo
-	ControllerInfo *NodeInfo
+	ControllerInfo string
 	conn           *grpc.ClientConn
 }
 
-func MakeBroker(info *BrokerInfo, controllerInfo *NodeInfo) (*Broker, error) {
+func MakeBroker(info *BrokerInfo, controllerInfo string) (*Broker, error) {
 	var opts []grpc.DialOption
 	opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 
-	conn, err := grpc.NewClient(info.NodeInfo.FullAddress(), opts...)
+	conn, err := grpc.NewClient(info.NodeAddr, opts...)
 	if err != nil {
 		return nil, err
 	}

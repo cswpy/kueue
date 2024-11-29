@@ -45,11 +45,8 @@ func (c *Controller) RegisterBroker(brokerName, address string) error {
 
 	// Add the broker to the metadata
 	c.Metadata.BrokerInfos[brokerName] = &BrokerInfo{
-		BrokerName: brokerName,
-		NodeInfo: NodeInfo{
-			Address: address,
-			Port:    9092,
-		},
+		BrokerName:       brokerName,
+		NodeAddr:         address,
 		HostedTopics:     make(map[string]*TopicInfo),
 		HostedPartitions: make(map[string]*PartitionInfo),
 	}
