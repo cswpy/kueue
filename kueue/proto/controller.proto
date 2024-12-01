@@ -5,6 +5,7 @@ option go_package = "kueue/kueue/proto";
 service ControllerService {
   rpc GetTopicProducer (ProducerTopicInfoRequest) returns (ProducerTopicInfoResponse);
   rpc GetTopicConsumer (ConsumerTopicInfoRequest) returns (ConsumerTopicInfoResponse);
+  rpc RegisterBroker (RegisterBrokerRequest) returns (RegisterBrokerResponse);
   rpc Heartbeat (HeartbeatRequest) returns (HeartbeatResponse);
 }
 
@@ -38,3 +39,9 @@ message HeartbeatRequest {
 
 message HeartbeatResponse {}
 
+message RegisterBrokerRequest {
+  string broker_id = 1;
+  string broker_address = 2;
+}
+
+message RegisterBrokerResponse {}

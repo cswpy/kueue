@@ -21,6 +21,7 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	ControllerService_GetTopicProducer_FullMethodName = "/ControllerService/GetTopicProducer"
 	ControllerService_GetTopicConsumer_FullMethodName = "/ControllerService/GetTopicConsumer"
+	ControllerService_RegisterBroker_FullMethodName   = "/ControllerService/RegisterBroker"
 	ControllerService_Heartbeat_FullMethodName        = "/ControllerService/Heartbeat"
 )
 
@@ -30,6 +31,7 @@ const (
 type ControllerServiceClient interface {
 	GetTopicProducer(ctx context.Context, in *ProducerTopicInfoRequest, opts ...grpc.CallOption) (*ProducerTopicInfoResponse, error)
 	GetTopicConsumer(ctx context.Context, in *ConsumerTopicInfoRequest, opts ...grpc.CallOption) (*ConsumerTopicInfoResponse, error)
+	RegisterBroker(ctx context.Context, in *RegisterBrokerRequest, opts ...grpc.CallOption) (*RegisterBrokerResponse, error)
 	Heartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error)
 }
 
@@ -61,6 +63,16 @@ func (c *controllerServiceClient) GetTopicConsumer(ctx context.Context, in *Cons
 	return out, nil
 }
 
+func (c *controllerServiceClient) RegisterBroker(ctx context.Context, in *RegisterBrokerRequest, opts ...grpc.CallOption) (*RegisterBrokerResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RegisterBrokerResponse)
+	err := c.cc.Invoke(ctx, ControllerService_RegisterBroker_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *controllerServiceClient) Heartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(HeartbeatResponse)
@@ -77,6 +89,7 @@ func (c *controllerServiceClient) Heartbeat(ctx context.Context, in *HeartbeatRe
 type ControllerServiceServer interface {
 	GetTopicProducer(context.Context, *ProducerTopicInfoRequest) (*ProducerTopicInfoResponse, error)
 	GetTopicConsumer(context.Context, *ConsumerTopicInfoRequest) (*ConsumerTopicInfoResponse, error)
+	RegisterBroker(context.Context, *RegisterBrokerRequest) (*RegisterBrokerResponse, error)
 	Heartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error)
 	mustEmbedUnimplementedControllerServiceServer()
 }
@@ -93,6 +106,9 @@ func (UnimplementedControllerServiceServer) GetTopicProducer(context.Context, *P
 }
 func (UnimplementedControllerServiceServer) GetTopicConsumer(context.Context, *ConsumerTopicInfoRequest) (*ConsumerTopicInfoResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetTopicConsumer not implemented")
+}
+func (UnimplementedControllerServiceServer) RegisterBroker(context.Context, *RegisterBrokerRequest) (*RegisterBrokerResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RegisterBroker not implemented")
 }
 func (UnimplementedControllerServiceServer) Heartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Heartbeat not implemented")
@@ -154,6 +170,24 @@ func _ControllerService_GetTopicConsumer_Handler(srv interface{}, ctx context.Co
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ControllerService_RegisterBroker_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RegisterBrokerRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControllerServiceServer).RegisterBroker(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControllerService_RegisterBroker_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControllerServiceServer).RegisterBroker(ctx, req.(*RegisterBrokerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _ControllerService_Heartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(HeartbeatRequest)
 	if err := dec(in); err != nil {
@@ -186,6 +220,10 @@ var ControllerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetTopicConsumer",
 			Handler:    _ControllerService_GetTopicConsumer_Handler,
+		},
+		{
+			MethodName: "RegisterBroker",
+			Handler:    _ControllerService_RegisterBroker_Handler,
 		},
 		{
 			MethodName: "Heartbeat",

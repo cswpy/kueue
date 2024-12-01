@@ -51,7 +51,7 @@ func main() {
 		HostedTopics:     make(map[string]*kueue.TopicInfo),
 		HostedPartitions: make(map[string]*kueue.PartitionInfo),
 	}
-
+	logrus.Printf("Connecting to controller at %s", *controllerAddr)
 	broker, err := kueue.NewBroker(bi, *controllerAddr)
 
 	if err != nil {
@@ -59,5 +59,7 @@ func main() {
 	}
 
 	proto.RegisterBrokerServiceServer(grpcServer, broker)
+
+	go broker.SendHeartbeat()
 	grpcServer.Serve(lis)
 }

@@ -11,6 +11,8 @@ import (
 	"maps"
 
 	"github.com/sirupsen/logrus"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // Controller manages metadata for the MQ cluster.
@@ -29,29 +31,34 @@ func NewController(controllerID string) *Controller {
 			TopicInfos:   make(map[string]*TopicInfo),
 			ControllerID: controllerID,
 		},
+		BrokerStatus: make(map[string]time.Time),
 	}
 }
 
 // RegisterBroker registers a new broker with the controller.
-func (c *Controller) RegisterBroker(brokerName, address string) error {
+func (c *Controller) RegisterBroker(ctx context.Context, req *proto.RegisterBrokerRequest) (*proto.RegisterBrokerResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	brokerName := req.BrokerId
+	brokerAddr := req.BrokerAddress
 	// Check if the broker already exists
 	if _, exists := c.Metadata.BrokerInfos[brokerName]; exists {
-		logrus.WithField("Topic", DController).Warnf("Broker %s is already registered.", brokerName)
-		return nil
+		warn := fmt.Sprintf("Broker %s is already registered.", brokerName)
+		logrus.WithField("Topic", DController).Warnf(warn)
+		return nil, status.Error(codes.AlreadyExists, warn)
 	}
 
 	// Add the broker to the metadata
 	c.Metadata.BrokerInfos[brokerName] = &BrokerInfo{
 		BrokerName:       brokerName,
-		NodeAddr:         address,
+		NodeAddr:         brokerAddr,
 		HostedTopics:     make(map[string]*TopicInfo),
 		HostedPartitions: make(map[string]*PartitionInfo),
 	}
-	logrus.WithField("Topic", DController).Infof("Broker %s registered at %s.", brokerName, address)
-	return nil
+	c.BrokerStatus[brokerName] = time.Now()
+	logrus.WithField("Topic", DController).Infof("Broker %s registered at %s.", brokerName, brokerAddr)
+	return &proto.RegisterBrokerResponse{}, nil
 }
 
 // CreateTopic creates a new topic and assigns partitions to brokers.
@@ -113,10 +120,10 @@ func (c *Controller) GetMetadata() *Metadata {
 }
 
 // Heartbeat updates the broker's health status.
-func (c *Controller) Heartbeat(ctx context.Context, req *proto.HeartbeatRequest) error {
+func (c *Controller) Heartbeat(ctx context.Context, req *proto.HeartbeatRequest) (*proto.HeartbeatResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
+	logrus.WithField("Topic", DController).Infof("Received heartbeat from broker %s.", req.BrokerId)
 	// Update broker health status
 	brokerName := req.BrokerId
 	if _, exists := c.Metadata.BrokerInfos[brokerName]; exists {
@@ -125,9 +132,10 @@ func (c *Controller) Heartbeat(ctx context.Context, req *proto.HeartbeatRequest)
 	} else {
 		err := fmt.Errorf("Broker %s not found.", brokerName)
 		logrus.WithField("Topic", DController).Errorf(err.Error())
-		return err
+		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
-	return nil
+	resp := &proto.HeartbeatResponse{}
+	return resp, nil
 }
 
 // getActiveBrokerIDs returns a list of active broker IDs.
