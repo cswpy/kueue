@@ -41,7 +41,8 @@ func main() {
 	if err != nil {
 		logrus.Fatalf("Failed to listen: %v", err)
 	}
-	logrus.WithField("Topic", kueue.DBroker).Infof("Broker service listening on %s", *brokerServiceAddr)
+	logger := logrus.WithField("Node", *brokerName)
+	logger.WithField("Topic", kueue.DBroker).Infof("Broker service listening on %s", *brokerServiceAddr)
 
 	var opts []grpc.ServerOption
 	grpcServer := grpc.NewServer(opts...)
@@ -51,8 +52,8 @@ func main() {
 		HostedTopics:     make(map[string]*kueue.TopicInfo),
 		HostedPartitions: make(map[string]*kueue.PartitionInfo),
 	}
-	logrus.Printf("Connecting to controller at %s", *controllerAddr)
-	broker, err := kueue.NewBroker(bi, *controllerAddr)
+	logger.Printf("Connecting to controller at %s", *controllerAddr)
+	broker, err := kueue.NewBroker(bi, *controllerAddr, *logger)
 
 	if err != nil {
 		logrus.Fatalf("Failed to create broker: %v", err)

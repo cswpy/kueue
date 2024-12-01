@@ -21,10 +21,11 @@ type Controller struct {
 	mu           sync.RWMutex // Ensures thread-safe access to metadata
 	Metadata     *Metadata    // Stores cluster metadata
 	BrokerStatus map[string]time.Time
+	logger       logrus.Entry
 }
 
 // NewController initializes a new Controller.
-func NewController(controllerID string) *Controller {
+func NewController(controllerID string, logger logrus.Entry) *Controller {
 	return &Controller{
 		Metadata: &Metadata{
 			BrokerInfos:  make(map[string]*BrokerInfo),
@@ -32,6 +33,7 @@ func NewController(controllerID string) *Controller {
 			ControllerID: controllerID,
 		},
 		BrokerStatus: make(map[string]time.Time),
+		logger:       logger,
 	}
 }
 
@@ -45,7 +47,7 @@ func (c *Controller) RegisterBroker(ctx context.Context, req *proto.RegisterBrok
 	// Check if the broker already exists
 	if _, exists := c.Metadata.BrokerInfos[brokerName]; exists {
 		warn := fmt.Sprintf("Broker %s is already registered.", brokerName)
-		logrus.WithField("Topic", DController).Warnf(warn)
+		c.logger.WithField("Topic", DController).Warnf(warn)
 		return nil, status.Error(codes.AlreadyExists, warn)
 	}
 
@@ -57,7 +59,7 @@ func (c *Controller) RegisterBroker(ctx context.Context, req *proto.RegisterBrok
 		HostedPartitions: make(map[string]*PartitionInfo),
 	}
 	c.BrokerStatus[brokerName] = time.Now()
-	logrus.WithField("Topic", DController).Infof("Broker %s registered at %s.", brokerName, brokerAddr)
+	c.logger.WithField("Topic", DController).Infof("Broker %s registered at %s.", brokerName, brokerAddr)
 	return &proto.RegisterBrokerResponse{}, nil
 }
 
@@ -69,7 +71,7 @@ func (c *Controller) CreateTopic(topicName string, partitionCount int, replicati
 	// Check if the topic already exists
 	if _, exists := c.Metadata.TopicInfos[topicName]; exists {
 		err := fmt.Errorf("Topic %s already exists.", topicName)
-		logrus.WithField("Topic", DController).Warnf(err.Error())
+		c.logger.WithField("Topic", DController).Warnf(err.Error())
 		return err
 	}
 
@@ -85,7 +87,7 @@ func (c *Controller) CreateTopic(topicName string, partitionCount int, replicati
 	brokerIDs := c.getActiveBrokerIDs()
 	if len(brokerIDs) == 0 {
 		err := fmt.Errorf("No active brokers available to assign partitions for topic %s", topicName)
-		logrus.WithField("Topic", DController).Errorf(err.Error())
+		c.logger.WithField("Topic", DController).Errorf(err.Error())
 		return err
 	}
 
@@ -108,7 +110,7 @@ func (c *Controller) CreateTopic(topicName string, partitionCount int, replicati
 
 	// Add the topic to metadata
 	c.Metadata.TopicInfos[topicName] = topic
-	logrus.Infof("Topic %s with %d partitions created.", topicName, partitionCount)
+	c.logger.Infof("Topic %s with %d partitions created.", topicName, partitionCount)
 	return nil
 }
 
@@ -123,15 +125,15 @@ func (c *Controller) GetMetadata() *Metadata {
 func (c *Controller) Heartbeat(ctx context.Context, req *proto.HeartbeatRequest) (*proto.HeartbeatResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	logrus.WithField("Topic", DController).Infof("Received heartbeat from broker %s.", req.BrokerId)
+	c.logger.WithField("Topic", DController).Infof("Received heartbeat from broker %s.", req.BrokerId)
 	// Update broker health status
 	brokerName := req.BrokerId
 	if _, exists := c.Metadata.BrokerInfos[brokerName]; exists {
 		c.BrokerStatus[brokerName] = time.Now()
-		logrus.WithField("Topic", DController).Infof("Broker %s is healthy.", brokerName)
+		c.logger.WithField("Topic", DController).Infof("Broker %s is healthy.", brokerName)
 	} else {
 		err := fmt.Errorf("Broker %s not found.", brokerName)
-		logrus.WithField("Topic", DController).Errorf(err.Error())
+		c.logger.WithField("Topic", DController).Errorf(err.Error())
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 	resp := &proto.HeartbeatResponse{}

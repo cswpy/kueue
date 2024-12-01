@@ -2,7 +2,6 @@ package kueue
 
 import (
 	"context"
-	"fmt"
 	"kueue/kueue/proto"
 	"time"
 
@@ -16,9 +15,10 @@ type Broker struct {
 	Info           *BrokerInfo
 	ControllerAddr string
 	client         proto.ControllerServiceClient
+	logger         logrus.Entry
 }
 
-func NewBroker(info *BrokerInfo, controllerAddr string) (*Broker, error) {
+func NewBroker(info *BrokerInfo, controllerAddr string, logger logrus.Entry) (*Broker, error) {
 	var opts []grpc.DialOption
 	opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 
@@ -26,7 +26,6 @@ func NewBroker(info *BrokerInfo, controllerAddr string) (*Broker, error) {
 	if err != nil {
 		return nil, err
 	}
-	fmt.Printf("Connected to controller at %s\n", controllerAddr)
 	client := proto.NewControllerServiceClient(conn)
 
 	// Register with the controller
@@ -43,18 +42,19 @@ func NewBroker(info *BrokerInfo, controllerAddr string) (*Broker, error) {
 		Info:           info,
 		ControllerAddr: controllerAddr,
 		client:         client,
+		logger:         logger,
 	}, nil
 }
 
 func (b *Broker) SendHeartbeat() {
 
 	for {
-		logrus.WithField("Topic", DBroker).Infof("Sending heartbeat to controller.")
+		b.logger.WithField("Topic", DBroker).Infof("Sending heartbeat to controller.")
 		_, err := b.client.Heartbeat(context.Background(), &proto.HeartbeatRequest{
 			BrokerId: b.Info.BrokerName,
 		})
 		if err != nil {
-			logrus.WithField("Topic", DBroker).Errorf("Error sending heartbeat: %v", err)
+			b.logger.WithField("Topic", DBroker).Errorf("Error sending heartbeat: %v", err)
 		}
 		time.Sleep(5 * time.Second)
 	}

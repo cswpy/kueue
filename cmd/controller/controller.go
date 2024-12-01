@@ -17,6 +17,11 @@ var (
 		"127.0.0.1:8080",
 		"host ip address of the broker service in the format of host:port",
 	)
+	controllerID = flag.String(
+		"controller-id",
+		"CTRL-1",
+		"unique name of the controller",
+	)
 )
 
 func main() {
@@ -26,12 +31,15 @@ func main() {
 	if err != nil {
 		logrus.Fatalf("Failed to listen: %v", err)
 	}
-	logrus.WithField("Topic", kueue.DBroker).Infof("Controller service listening on %s", *controllerServiceAddr)
+
+	logger := logrus.WithField("Node", *controllerID)
+
+	logger.WithField("Topic", kueue.DBroker).Infof("Controller service listening on %s", *controllerServiceAddr)
 
 	var opts []grpc.ServerOption
 	grpcServer := grpc.NewServer(opts...)
 
-	controller := kueue.NewController("controller-1")
+	controller := kueue.NewController(*controllerID, *logger)
 
 	proto.RegisterControllerServiceServer(grpcServer, controller)
 	grpcServer.Serve(lis)
