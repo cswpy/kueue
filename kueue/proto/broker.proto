@@ -28,7 +28,8 @@ message ProduceResponse {
 
 message ConsumeRequest {
   string topic_name = 1;
-  string consumer_id = 2;
+  int32 partition_id = 2;
+  string consumer_id = 3;
 }
 
 message ConsumeResponse {
