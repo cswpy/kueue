@@ -1,6 +1,7 @@
 # README
 
 ## Write-Path
+
 ```mermaid
 sequenceDiagram
     participant P as Producer
@@ -17,3 +18,18 @@ sequenceDiagram
     destroy B2
 ```
 
+## Read-Path
+
+```mermaid
+sequenceDiagram
+    participant CTRL as Controller
+    participant C as Consumer
+    C->>CTRL: Subscribe to a new topic
+    CTRL->>CTRL: Assign a partition to the consumer
+    CTRL->>C: Return broker info and partition ID
+    create participant B1 as Broker 1
+    C->>B1: Consume messages from partition ID
+    B1->>B1: Persists consumer offset
+    B1->>C: Return messages
+    C->>B1: ACK/Commit?
+```

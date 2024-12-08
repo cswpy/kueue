@@ -2,6 +2,7 @@ package kueue
 
 import (
 	"context"
+	"fmt"
 	"kueue/kueue/proto"
 	"time"
 
@@ -12,10 +13,12 @@ import (
 
 type Broker struct {
 	proto.UnimplementedBrokerServiceServer
-	Info           *BrokerInfo
+	BrokerInfo     *BrokerInfo
 	ControllerAddr string
 	client         proto.ControllerServiceClient
 	logger         logrus.Entry
+	data           map[string][]*proto.ConsumerMessage // topic_partition_id -> list of records, save protobuf messages directly for simplicity
+	consumerOffset map[string]map[string]int           // consumer_id -> topic_partition_id -> offset
 }
 
 func NewBroker(info *BrokerInfo, controllerAddr string, logger logrus.Entry) (*Broker, error) {
@@ -39,11 +42,63 @@ func NewBroker(info *BrokerInfo, controllerAddr string, logger logrus.Entry) (*B
 	}
 
 	return &Broker{
-		Info:           info,
+		BrokerInfo:     info,
 		ControllerAddr: controllerAddr,
 		client:         client,
 		logger:         logger,
 	}, nil
+}
+
+func (b *Broker) Produce(ctx context.Context, req *proto.ProduceRequest) (*proto.ProduceResponse, error) {
+	b.logger.WithField("Topic", DBroker).Debugf("Received Produce request: %v", req)
+
+	// Create topic if it doesn't exist
+	if _, ok := b.data[req.TopicName]; !ok {
+		b.BrokerInfo.HostedTopics[req.TopicName] = &TopicInfo{
+			TopicName:         req.TopicName,
+			TopicPartitions:   make(map[int]*PartitionInfo),
+			ReplicationFactor: 1,
+		}
+	}
+	topic := b.BrokerInfo.HostedTopics[req.TopicName]
+	// Create partition if it doesn't exist
+	if _, ok := topic.TopicPartitions[int(req.PartitionId)]; !ok {
+		topic.TopicPartitions[int(req.PartitionId)] = &PartitionInfo{
+			PartitionID: int(req.PartitionId),
+			IsLeader:    true,
+		}
+	}
+	partitionID := int(req.PartitionId)
+	topicPartitionID := fmt.Sprintf("%s-%d", req.TopicName, partitionID)
+	topicPartition := b.data[topicPartitionID]
+	// Getting Offset from the last record in the partition
+	baseOffset := int32(0)
+	topicPartitionLength := len(topicPartition)
+	if topicPartitionLength > 0 {
+		baseOffset = topicPartition[topicPartitionLength-1].Offset + 1
+	}
+	nextOffset := baseOffset
+	// Append records to partition
+	for _, msg := range req.Messages {
+		consumerMsg := &proto.ConsumerMessage{
+			Offset:    nextOffset,
+			Timestamp: time.Now().Unix(),
+			Key:       msg.Key,
+			Value:     msg.Value,
+		}
+		topicPartition = append(topicPartition, consumerMsg)
+		nextOffset++
+	}
+
+	return &proto.ProduceResponse{
+		TopicName:  req.TopicName,
+		BaseOffset: baseOffset,
+	}, nil
+}
+
+func (b *Broker) Consume(ctx context.Context, req *proto.ConsumeRequest) (*proto.ConsumeResponse, error) {
+	b.logger.WithField("Topic", DBroker).Debugf("Received Consume request: %v", req)
+	return &proto.ConsumeResponse{}, nil
 }
 
 func (b *Broker) SendHeartbeat() {
@@ -51,7 +106,7 @@ func (b *Broker) SendHeartbeat() {
 	for {
 		b.logger.WithField("Topic", DBroker).Infof("Sending heartbeat to controller.")
 		_, err := b.client.Heartbeat(context.Background(), &proto.HeartbeatRequest{
-			BrokerId: b.Info.BrokerName,
+			BrokerId: b.BrokerInfo.BrokerName,
 		})
 		if err != nil {
 			b.logger.WithField("Topic", DBroker).Errorf("Error sending heartbeat: %v", err)

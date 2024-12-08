@@ -53,10 +53,9 @@ func (c *Controller) RegisterBroker(ctx context.Context, req *proto.RegisterBrok
 
 	// Add the broker to the metadata
 	c.Metadata.BrokerInfos[brokerName] = &BrokerInfo{
-		BrokerName:       brokerName,
-		NodeAddr:         brokerAddr,
-		HostedTopics:     make(map[string]*TopicInfo),
-		HostedPartitions: make(map[string]*PartitionInfo),
+		BrokerName:   brokerName,
+		NodeAddr:     brokerAddr,
+		HostedTopics: make(map[string]*TopicInfo),
 	}
 	c.BrokerStatus[brokerName] = time.Now()
 	c.logger.WithField("Topic", DController).Infof("Broker %s registered at %s.", brokerName, brokerAddr)
@@ -70,7 +69,7 @@ func (c *Controller) CreateTopic(topicName string, partitionCount int, replicati
 
 	// Check if the topic already exists
 	if _, exists := c.Metadata.TopicInfos[topicName]; exists {
-		err := fmt.Errorf("Topic %s already exists.", topicName)
+		err := fmt.Errorf("topic %s already exists", topicName)
 		c.logger.WithField("Topic", DController).Warnf(err.Error())
 		return err
 	}
@@ -80,13 +79,12 @@ func (c *Controller) CreateTopic(topicName string, partitionCount int, replicati
 		TopicName:         topicName,
 		TopicPartitions:   make(map[int]*PartitionInfo, partitionCount),
 		ReplicationFactor: replicationFactor,
-		LeaderPartitionID: -1,
 	}
 
 	// Assign partitions to brokers
 	brokerIDs := c.getActiveBrokerIDs()
 	if len(brokerIDs) == 0 {
-		err := fmt.Errorf("No active brokers available to assign partitions for topic %s", topicName)
+		err := fmt.Errorf("no active brokers available to assign partitions for topic %s", topicName)
 		c.logger.WithField("Topic", DController).Errorf(err.Error())
 		return err
 	}
@@ -94,9 +92,9 @@ func (c *Controller) CreateTopic(topicName string, partitionCount int, replicati
 	for i := 0; i < partitionCount; i++ {
 		leaderBroker := brokerIDs[i%len(brokerIDs)]
 		//replicas := c.selectReplicas(brokerIDs, leaderBroker, replicationFactor)
-		partitionID := fmt.Sprintf("%s-%d", topicName, i)
+		// partitionID := fmt.Sprintf("%s-%d", topicName, i)
 		partition := &PartitionInfo{
-			PartitionID: partitionID,
+			PartitionID: i,
 			IsLeader:    true,
 		}
 
@@ -104,7 +102,6 @@ func (c *Controller) CreateTopic(topicName string, partitionCount int, replicati
 		topic.TopicPartitions[i] = partition
 
 		// Update brokerInfo
-		c.Metadata.BrokerInfos[leaderBroker].HostedPartitions[partitionID] = partition
 		c.Metadata.BrokerInfos[leaderBroker].HostedTopics[topicName] = topic
 	}
 
@@ -132,7 +129,7 @@ func (c *Controller) Heartbeat(ctx context.Context, req *proto.HeartbeatRequest)
 		c.BrokerStatus[brokerName] = time.Now()
 		c.logger.WithField("Topic", DController).Infof("Broker %s is healthy.", brokerName)
 	} else {
-		err := fmt.Errorf("Broker %s not found.", brokerName)
+		err := fmt.Errorf("broker %s not found", brokerName)
 		c.logger.WithField("Topic", DController).Errorf(err.Error())
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
