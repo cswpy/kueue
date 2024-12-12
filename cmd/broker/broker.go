@@ -47,10 +47,9 @@ func main() {
 	var opts []grpc.ServerOption
 	grpcServer := grpc.NewServer(opts...)
 	bi := &kueue.BrokerInfo{
-		BrokerName:       *brokerName,
-		NodeAddr:         *brokerServiceAddr,
-		HostedTopics:     make(map[string]*kueue.TopicInfo),
-		HostedPartitions: make(map[string]*kueue.PartitionInfo),
+		BrokerName:   *brokerName,
+		NodeAddr:     *brokerServiceAddr,
+		HostedTopics: make(map[string]*kueue.TopicInfo),
 	}
 	logger.Printf("Connecting to controller at %s", *controllerAddr)
 	broker, err := kueue.NewBroker(bi, *controllerAddr, *logger)
