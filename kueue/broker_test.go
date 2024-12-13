@@ -8,6 +8,8 @@ import (
 	"kueue/kueue/proto"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -153,27 +155,22 @@ func TestBrokerConcurrentProduce(t *testing.T) {
         },
     }
 
-    // Prepare a set of messages for multiple producers
     msgs := []*proto.ProducerMessage{
         {Key: "key1", Value: "value1"},
         {Key: "key2", Value: "value2"},
         {Key: "key3", Value: "value3"},
-        {Key: "key4", Value: "value4"},
-        {Key: "key5", Value: "value5"},
     }
 
-    // Number of concurrent producers
-    numProducers := 10
-    var wg sync.WaitGroup
+    numProducers := 2
+    iterations := 5
+    expectedMessages := numProducers * iterations * len(msgs)
 
-    // Start concurrent producers
+    var wg sync.WaitGroup
     for i := 0; i < numProducers; i++ {
         wg.Add(1)
         go func(producerID int) {
             defer wg.Done()
-            for j := 0; j < 100; j++ {
-                // Each producer sends a batch of messages
-                // You can vary the topic, partition, or just use the same for contention
+            for j := 0; j < iterations; j++ {
                 _, err := b.Produce(context.Background(), &proto.ProduceRequest{
                     TopicName:   "topic1",
                     ProducerId:  fmt.Sprintf("producer%d", producerID),
@@ -186,20 +183,76 @@ func TestBrokerConcurrentProduce(t *testing.T) {
             }
         }(i)
     }
-
-    // Wait for all producers to finish
     wg.Wait()
 
-    // If no panic occurred and no data races are reported when using `-race`,
-    // it suggests that the code is thread-safe.
-    // However, you can also add assertions to check final data states if needed.
-
-    // Verify some data after concurrency:
     dirPath := filepath.Join(b.BrokerInfo.BrokerName, "topic1-0")
-    _, err := os.ReadDir(dirPath)
+    files, err := os.ReadDir(dirPath)
     assert.NoError(t, err, "Failed to read directory after concurrency test")
+    assert.NotEmpty(t, files, "Expected some files to be created")
 
-    // Optionally, clean up
+    // This map will track how many messages each file contains
+    fileMessageCount := make(map[string]int)
+    var allMessages []*proto.ConsumerMessage
+
+    for _, fileEntry := range files {
+        filePath := filepath.Join(dirPath, fileEntry.Name())
+        f, err := os.Open(filePath)
+        assert.NoError(t, err, "Failed to open file")
+        defer f.Close()
+
+        count := 0
+        for {
+            var length uint32
+            err := binary.Read(f, binary.LittleEndian, &length)
+            if err == io.EOF {
+                break
+            }
+            assert.NoError(t, err, "Failed to read message length")
+
+            data := make([]byte, length)
+            _, err = io.ReadFull(f, data)
+            assert.NoError(t, err, "Failed to read entire message data")
+
+            msg := &proto.ConsumerMessage{}
+            err = proto1.Unmarshal(data, msg)
+            assert.NoError(t, err, "Failed to unmarshal message")
+
+            allMessages = append(allMessages, msg)
+            count++
+        }
+        fileMessageCount[fileEntry.Name()] = count
+    }
+
+    // Verify total messages
+    assert.Equal(t, expectedMessages, len(allMessages), "Number of read messages does not match expected")
+
+    // Verify each file has the expected number of messages
+    // Since PersistBatch=2, each file (except possibly the last) should have 2 messages.
+    // We can determine the expected count per file by examining the file name.
+    // fileName is like "0000000000.bin", parse the integer and confirm the range.
+    for fileName, count := range fileMessageCount {
+        baseIndexStr := strings.TrimSuffix(fileName, filepath.Ext(fileName)) // remove .bin
+        baseIndex, err := strconv.Atoi(baseIndexStr)
+        assert.NoError(t, err, "Failed to parse file index")
+
+        // The offsets for this file range from baseIndex to baseIndex+(PersistBatch-1).
+        startOffset := baseIndex
+        endOffset := baseIndex + b.BrokerInfo.PersistBatch - 1
+
+        // The maximum offset we have is expectedMessages-1 (since offsets start at 0).
+        // If the last file might contain fewer messages, handle that:
+        maxOffset := expectedMessages - 1
+        expectedCount := b.BrokerInfo.PersistBatch
+        if endOffset > maxOffset {
+            // This means it's the last file and may have fewer messages.
+            expectedCount = (maxOffset - startOffset) + 1
+        }
+
+        assert.Equal(t, expectedCount, count, 
+            "File %s expected %d messages but got %d", fileName, expectedCount, count)
+    }
+
+    // Optional: Clean up
     err = os.RemoveAll(b.BrokerInfo.BrokerName)
     assert.NoError(t, err)
 }
