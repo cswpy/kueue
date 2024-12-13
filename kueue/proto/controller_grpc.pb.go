@@ -29,9 +29,9 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type ControllerServiceClient interface {
-	GetTopic(ctx context.Context, in *ProducerTopicInfoRequest, opts ...grpc.CallOption) (*ProducerTopicInfoResponse, error)
+	GetTopic(ctx context.Context, in *ProducerTopicRequest, opts ...grpc.CallOption) (*ProducerTopicResponse, error)
 	RegisterBroker(ctx context.Context, in *RegisterBrokerRequest, opts ...grpc.CallOption) (*RegisterBrokerResponse, error)
-	Subscribe(ctx context.Context, in *ConsumerTopicInfoRequest, opts ...grpc.CallOption) (*ConsumerTopicInfoResponse, error)
+	Subscribe(ctx context.Context, in *SubscribeRequest, opts ...grpc.CallOption) (*SubscribeResponse, error)
 	Heartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error)
 }
 
@@ -43,9 +43,9 @@ func NewControllerServiceClient(cc grpc.ClientConnInterface) ControllerServiceCl
 	return &controllerServiceClient{cc}
 }
 
-func (c *controllerServiceClient) GetTopic(ctx context.Context, in *ProducerTopicInfoRequest, opts ...grpc.CallOption) (*ProducerTopicInfoResponse, error) {
+func (c *controllerServiceClient) GetTopic(ctx context.Context, in *ProducerTopicRequest, opts ...grpc.CallOption) (*ProducerTopicResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ProducerTopicInfoResponse)
+	out := new(ProducerTopicResponse)
 	err := c.cc.Invoke(ctx, ControllerService_GetTopic_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -63,9 +63,9 @@ func (c *controllerServiceClient) RegisterBroker(ctx context.Context, in *Regist
 	return out, nil
 }
 
-func (c *controllerServiceClient) Subscribe(ctx context.Context, in *ConsumerTopicInfoRequest, opts ...grpc.CallOption) (*ConsumerTopicInfoResponse, error) {
+func (c *controllerServiceClient) Subscribe(ctx context.Context, in *SubscribeRequest, opts ...grpc.CallOption) (*SubscribeResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ConsumerTopicInfoResponse)
+	out := new(SubscribeResponse)
 	err := c.cc.Invoke(ctx, ControllerService_Subscribe_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -87,9 +87,9 @@ func (c *controllerServiceClient) Heartbeat(ctx context.Context, in *HeartbeatRe
 // All implementations must embed UnimplementedControllerServiceServer
 // for forward compatibility.
 type ControllerServiceServer interface {
-	GetTopic(context.Context, *ProducerTopicInfoRequest) (*ProducerTopicInfoResponse, error)
+	GetTopic(context.Context, *ProducerTopicRequest) (*ProducerTopicResponse, error)
 	RegisterBroker(context.Context, *RegisterBrokerRequest) (*RegisterBrokerResponse, error)
-	Subscribe(context.Context, *ConsumerTopicInfoRequest) (*ConsumerTopicInfoResponse, error)
+	Subscribe(context.Context, *SubscribeRequest) (*SubscribeResponse, error)
 	Heartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error)
 	mustEmbedUnimplementedControllerServiceServer()
 }
@@ -101,13 +101,13 @@ type ControllerServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedControllerServiceServer struct{}
 
-func (UnimplementedControllerServiceServer) GetTopic(context.Context, *ProducerTopicInfoRequest) (*ProducerTopicInfoResponse, error) {
+func (UnimplementedControllerServiceServer) GetTopic(context.Context, *ProducerTopicRequest) (*ProducerTopicResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetTopic not implemented")
 }
 func (UnimplementedControllerServiceServer) RegisterBroker(context.Context, *RegisterBrokerRequest) (*RegisterBrokerResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RegisterBroker not implemented")
 }
-func (UnimplementedControllerServiceServer) Subscribe(context.Context, *ConsumerTopicInfoRequest) (*ConsumerTopicInfoResponse, error) {
+func (UnimplementedControllerServiceServer) Subscribe(context.Context, *SubscribeRequest) (*SubscribeResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Subscribe not implemented")
 }
 func (UnimplementedControllerServiceServer) Heartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error) {
@@ -135,7 +135,7 @@ func RegisterControllerServiceServer(s grpc.ServiceRegistrar, srv ControllerServ
 }
 
 func _ControllerService_GetTopic_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ProducerTopicInfoRequest)
+	in := new(ProducerTopicRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -147,7 +147,7 @@ func _ControllerService_GetTopic_Handler(srv interface{}, ctx context.Context, d
 		FullMethod: ControllerService_GetTopic_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ControllerServiceServer).GetTopic(ctx, req.(*ProducerTopicInfoRequest))
+		return srv.(ControllerServiceServer).GetTopic(ctx, req.(*ProducerTopicRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -171,7 +171,7 @@ func _ControllerService_RegisterBroker_Handler(srv interface{}, ctx context.Cont
 }
 
 func _ControllerService_Subscribe_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ConsumerTopicInfoRequest)
+	in := new(SubscribeRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -183,7 +183,7 @@ func _ControllerService_Subscribe_Handler(srv interface{}, ctx context.Context, 
 		FullMethod: ControllerService_Subscribe_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ControllerServiceServer).Subscribe(ctx, req.(*ConsumerTopicInfoRequest))
+		return srv.(ControllerServiceServer).Subscribe(ctx, req.(*SubscribeRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }

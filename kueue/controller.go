@@ -62,14 +62,14 @@ func (c *Controller) RegisterBroker(ctx context.Context, req *proto.RegisterBrok
 }
 
 // GetTopic creates a new topic and assigns partitions to brokers if not exists, and return the partition metadata to producer
-func (c *Controller) GetTopic(ctx context.Context, req *proto.ProducerTopicInfoRequest) (*proto.ProducerTopicInfoResponse, error) {
+func (c *Controller) GetTopic(ctx context.Context, req *proto.ProducerTopicRequest) (*proto.ProducerTopicResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	// Return the partition metadata if the topic already exists
 	if _, exists := c.Metadata.TopicInfos[req.TopicName]; exists {
 		arr := c.Metadata.getTopicPartitions(req.TopicName)
-		resp := &proto.ProducerTopicInfoResponse{
+		resp := &proto.ProducerTopicResponse{
 			TopicName:  req.TopicName,
 			Partitions: arr,
 		}
@@ -97,7 +97,7 @@ func (c *Controller) GetTopic(ctx context.Context, req *proto.ProducerTopicInfoR
 
 	partitionsArr := c.Metadata.getTopicPartitions(req.TopicName)
 
-	resp := &proto.ProducerTopicInfoResponse{
+	resp := &proto.ProducerTopicResponse{
 		TopicName:  req.TopicName,
 		Partitions: partitionsArr,
 	}

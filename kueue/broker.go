@@ -26,8 +26,8 @@ type Broker struct {
 	ControllerAddr string
 	client         proto.ControllerServiceClient
 	logger         logrus.Entry
-	data           xsync.Map                 // topic_partition_id -> list of records, save protobuf messages directly for simplicity; uses xsync.Map for concurrent access
-	consumerOffset map[string]map[string]int // consumer_id -> topic_partition_id -> offset
+	data           *xsync.Map       // topic_partition_id -> list of records, save protobuf messages directly for simplicity; uses xsync.Map for concurrent access
+	consumerOffset map[string]int32 // consumer_id_topic_partition_id -> offset
 	offsetLock     sync.RWMutex
 }
 
@@ -56,6 +56,7 @@ func NewBroker(info *BrokerInfo, controllerAddr string, logger logrus.Entry) (*B
 		ControllerAddr: controllerAddr,
 		client:         client,
 		logger:         logger,
+		data:           xsync.NewMap(),
 	}, nil
 }
 
@@ -95,37 +96,39 @@ func (b *Broker) Produce(ctx context.Context, req *proto.ProduceRequest) (*proto
 	}, nil
 }
 
+// TODO: handle the case where new consumers start consuming from the beginning of the topic-partition, which is not in main memory but on disk
+// Consume returns a batch of messages from a topic-partition, it checks whether the topic-partition exists in the broker's data
+// if not, it means the request is probably unauthorized/meant for another broker; then checks if there is any message to consume;
+// it creates an offset for new consumers
 func (b *Broker) Consume(ctx context.Context, req *proto.ConsumeRequest) (*proto.ConsumeResponse, error) {
 	b.logger.WithField("Topic", DBroker).Debugf("Received Consume request: %v", req)
 
-	b.offsetLock.Lock()
-	defer b.offsetLock.Unlock()
-
-	if _, ok := b.consumerOffset[req.ConsumerId]; !ok {
-		return nil, status.Error(codes.NotFound, "Consumer not found")
-	}
-
-	currConsumerOffset := b.consumerOffset[req.ConsumerId]
 	topicPartitionId := fmt.Sprintf("%s-%d", req.TopicName, req.PartitionId)
-	if _, ok := currConsumerOffset[topicPartitionId]; !ok {
-		return nil, status.Error(codes.NotFound, "Topic-partition not found in broker")
-	}
-
-	currMsgOffset := int32(currConsumerOffset[topicPartitionId])
-
 	topicPartition, ok := b.data.Load(topicPartitionId)
 
+	// Check if the topic-partition exists in the broker's data
 	if !ok {
 		err := fmt.Errorf("topic-partition %s not found in broker %v data", topicPartitionId, b.BrokerInfo.BrokerName)
 		b.logger.Fatal(err)
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
+	// Check topic-partition data size
 	topicPartitionData := topicPartition.([]*proto.ConsumerMessage)
-
 	if len(topicPartitionData) == 0 {
 		return nil, status.Error(codes.FailedPrecondition, "topic-partition is empty")
 	}
+
+	b.offsetLock.Lock()
+	defer b.offsetLock.Unlock()
+
+	// Create offset for new consumers
+	offsetLookupKey := fmt.Sprintf("%s-%s", req.ConsumerId, topicPartitionId)
+	if _, ok := b.consumerOffset[offsetLookupKey]; !ok {
+		b.consumerOffset[offsetLookupKey] = 0
+	}
+
+	currMsgOffset := b.consumerOffset[offsetLookupKey]
 
 	baseMsgOffset := topicPartitionData[0].Offset
 	beginIndex := currMsgOffset - baseMsgOffset
@@ -141,11 +144,19 @@ func (b *Broker) Consume(ctx context.Context, req *proto.ConsumeRequest) (*proto
 	}
 
 	b.offsetLock.Lock()
-	b.consumerOffset[req.ConsumerId][topicPartitionId] = int(endIndex)
+	b.consumerOffset[offsetLookupKey] = int32(endIndex)
 	b.offsetLock.Unlock()
 
 	return resp, nil
 }
+
+// func (b *Broker) AddConsumer(ctx context.Context, req *proto.AddConsumerRequest) (*proto.AddConsumerResponse, error) {
+// 	topicPartitionID := fmt.Sprintf("%s-%d", req.TopicName, req.PartitionId)
+// 	b.offsetLock.Lock()
+// 	b.consumerOffset[req.ConsumerId][topicPartitionID] = 0
+// 	b.offsetLock.Unlock()
+// 	return nil, nil
+// }
 
 func (b *Broker) SendHeartbeat() {
 
