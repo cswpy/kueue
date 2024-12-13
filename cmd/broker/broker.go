@@ -3,9 +3,13 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
+	"sync"
+
 	// "fmt"
 	"kueue/kueue"
 	"net"
+
 	// "os"
 	// "path/filepath"
 
@@ -32,10 +36,20 @@ var (
 		"",
 		"host ip address of the controller service in the format of host:port",
 	)
+	persistBatch = flag.Int(
+        "persist-batch",
+        0,
+        "number of messages to persist for each topicPartitionId",
+    )
+
+
 )
 
 func main() {
 	flag.Parse()
+	if persistBatch == nil || *persistBatch == 0 {
+        logrus.Fatalf("persist batch is required.")
+    }
 	if brokerName == nil || *brokerName == "" {
 		logrus.Fatalf("Broker name is required.")
 	}
@@ -55,6 +69,7 @@ func main() {
 		BrokerName:   *brokerName,
 		NodeAddr:     *brokerServiceAddr,
 		HostedTopics: make(map[string]*kueue.TopicInfo),
+		PersistBatch: *persistBatch,
 	}
 	logger.Printf("Connecting to controller at %s", *controllerAddr)
 	broker, err := kueue.NewBroker(bi, *controllerAddr, *logger)
@@ -78,28 +93,65 @@ func main() {
 
 	logger.Printf("Start calling Produce")
 
-	response, error := broker.Produce(context.Background(),  &proto.ProduceRequest{
-		TopicName: "topic1",
-		ProducerId: "producer1",
-		PartitionId: int32(1),
-		Messages: []*proto.ProducerMessage{
-            {Key: "key1", Value: "value1"},
-        },
-	})
+	// response, error := broker.Produce(context.Background(),  &proto.ProduceRequest{
+	// 	TopicName: "topic1",
+	// 	ProducerId: "producer1",
+	// 	PartitionId: int32(1),
+	// 	Messages: []*proto.ProducerMessage{
+    //         {Key: "key1", Value: "value1"},
+    //     },
+	// })
 
-	if err != nil {
-		logrus.Fatalf("broker produce error: ", error)
-	}
+	// if err != nil {
+	// 	logrus.Fatalf("broker produce error: ", error)
+	// }
 
-	logger.Printf("Received Message Topic: %s", response.GetTopicName())
-	logger.Printf("Received Message Topic: %d", response.GetBaseOffset())
+	// logger.Printf("Received Message Topic: %s", response.GetTopicName())
+	// logger.Printf("Received Message Topic: %d", response.GetBaseOffset())
 
 
-	topicPartition, _ := broker.Data.LoadOrStore("topic1-1", make([]*proto.ConsumerMessage, 0))
-	topicPartitionData := topicPartition.([]*proto.ConsumerMessage)
-	for _, msg := range topicPartitionData {
-        logger.Printf("Message Offset: %d, Timestamp: %d, Key: %s, Value: %s", msg.GetOffset(), msg.GetTimestamp(), msg.GetKey(), msg.GetValue())
-    }
+	// topicPartition, _ := broker.Data.LoadOrStore("topic1-1", make([]*proto.ConsumerMessage, 0))
+	// topicPartitionData := topicPartition.([]*proto.ConsumerMessage)
+	// for _, msg := range topicPartitionData {
+    //     logger.Printf("Message Offset: %d, Timestamp: %d, Key: %s, Value: %s", msg.GetOffset(), msg.GetTimestamp(), msg.GetKey(), msg.GetValue())
+    // }
+
+	   // Number of concurrent producers
+	   numProducers := 10
+	   var wg sync.WaitGroup
+   
+	   // Start concurrent producers
+	   for i := 0; i < numProducers; i++ {
+		   wg.Add(1)
+		   go func(producerID int) {
+			   defer wg.Done()
+			   for j := 0; j < 101; j++ {
+				   response, err := broker.Produce(context.Background(), &proto.ProduceRequest{
+					   TopicName:  "topic1",
+					   ProducerId: fmt.Sprintf("producer%d", producerID),
+					   PartitionId: int32(1),
+					   Messages: []*proto.ProducerMessage{
+						   {Key: fmt.Sprintf("key%d-%d", producerID, j), Value: fmt.Sprintf("value%d-%d", producerID, j)},
+					   },
+				   })
+   
+				   if err != nil {
+					   logrus.Fatalf("broker produce error: %v", err)
+				   }
+   
+				   logger.Printf("Produced Message %d by Producer %d: Topic: %s, BaseOffset: %d", j, producerID, response.GetTopicName(), response.GetBaseOffset())
+			   }
+		   }(i)
+	   }
+   
+	   // Wait for all producers to finish
+	   wg.Wait()
+   
+	   // Log the MessageCount for topic1-1
+	//    broker.messageCountMu.Lock()
+	//    messageCount := broker.MessageCount["topic1-1"]
+	//    broker.messageCountMu.Unlock()
+	//    logger.Printf("MessageCount for topic1-1: %d", messageCount)
 
 
 	// ------------ create binary file for each message ----------

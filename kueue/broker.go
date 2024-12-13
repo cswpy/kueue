@@ -35,9 +35,11 @@ type Broker struct {
 	Data           *xsync.Map                 // topic_partition_id -> list of records, save protobuf messages directly for simplicity; uses xsync.Map for concurrent access
 	ConsumerOffset map[string]map[string]int // consumer_id -> topic_partition_id -> offset
 	offsetLock     sync.RWMutex
+	MessageCount   map[string]int    
+	messageCountMu sync.Mutex 
 }
 
-func NewBroker(info *BrokerInfo, controllerAddr string, logger logrus.Entry) (*Broker, error) {
+func NewBroker(info *BrokerInfo, controllerAddr string, logger logrus.Entry,) (*Broker, error) {
 	var opts []grpc.DialOption
 	opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 
@@ -72,6 +74,7 @@ func NewBroker(info *BrokerInfo, controllerAddr string, logger logrus.Entry) (*B
 		Data: 		 	xsync.NewMap(), // Initialize the xsync.Map
 		ConsumerOffset: make(map[string]map[string]int),
 		logger:         logger,
+		MessageCount:   make(map[string]int),
 	}, nil
 }
 
@@ -80,6 +83,10 @@ func (b *Broker) Produce(ctx context.Context, req *proto.ProduceRequest) (*proto
 
 	partitionID := int(req.PartitionId)
 	topicPartitionID := fmt.Sprintf("%s-%d", req.TopicName, partitionID)
+
+	b.messageCountMu.Lock()
+    defer b.messageCountMu.Unlock()
+	
 	topicPartition, _ := b.Data.LoadOrStore(topicPartitionID, make([]*proto.ConsumerMessage, 0))
 	topicPartitionData := topicPartition.([]*proto.ConsumerMessage)
 
@@ -102,12 +109,11 @@ func (b *Broker) Produce(ctx context.Context, req *proto.ProduceRequest) (*proto
 		topicPartitionData = append(topicPartitionData, consumerMsg)
 		nextOffset++
 		b.persistData(topicPartitionID, consumerMsg)
+		
 	}
 
 	b.Data.Store(topicPartitionID, topicPartitionData)
 
-
-	// persistent
 
 
 	return &proto.ProduceResponse{
@@ -132,14 +138,36 @@ func (b *Broker) persistData(topicPartitionId string, msg *proto.ConsumerMessage
         return
     }
 
-    // Use offset for file name
-    fileName := fmt.Sprintf("message-%d.bin", msg.GetOffset())
-    filePath := filepath.Join(dirPath, fileName)
 
-    err = os.WriteFile(filePath, dataBytes, 0644)
-    if err != nil {
-        b.logger.Printf("Failed to write file %s: %v", filePath, err)
-    }
+    messageCount := b.MessageCount[topicPartitionId]
+    fileIndex := (messageCount / b.BrokerInfo.PersistBatch) * b.BrokerInfo.PersistBatch
+    fileName := fmt.Sprintf("%010d.bin", fileIndex)
+	filePath := filepath.Join(dirPath, fileName)
+
+
+	go func() {
+		b.messageCountMu.Lock()
+        defer b.messageCountMu.Unlock()
+
+        // Open the file in append mode, create it if it doesn't exist
+        file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+        if err != nil {
+            b.logger.Printf("Failed to open file %s: %v", filePath, err)
+            return
+        }
+        defer file.Close()
+
+        // Write the serialized message to the file
+        _, err = file.Write(dataBytes)
+        if err != nil {
+            b.logger.Printf("Failed to write to file %s: %v", filePath, err)
+            return
+        }
+
+		b.MessageCount[topicPartitionId]++
+
+    }()
+    
 }
 
 

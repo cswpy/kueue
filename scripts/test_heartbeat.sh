@@ -17,9 +17,11 @@ BROKER_DETAILS=(
     # "BR3 127.0.0.1:8083"
 )
 
+PERSIST_BATCH=100
+
 for detail in "${BROKER_DETAILS[@]}"; do
     IFS=' ' read -r broker_name broker_address <<<"$detail"
-    go run -race cmd/broker/broker.go --broker-name="${broker_name}" --broker-address="${broker_address}" --controller-address="${CONTROLLER_ADDRESS}" &
+    go run -race cmd/broker/broker.go --persist-batch="${PERSIST_BATCH}" --broker-name="${broker_name}" --broker-address="${broker_address}" --controller-address="${CONTROLLER_ADDRESS}" &
 done
 
 # Wait for all background processes to finish

@@ -4,6 +4,7 @@ type BrokerInfo struct {
 	BrokerName   string // unique name of the broker
 	NodeAddr     string
 	HostedTopics map[string]*TopicInfo // topic name to topic
+	PersistBatch int
 }
 
 type PartitionInfo struct {
