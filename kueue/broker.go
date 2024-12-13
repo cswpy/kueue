@@ -16,7 +16,7 @@ import (
 )
 
 var (
-	MAX_BATCH_SIZE = 20
+	MAX_BATCH_SIZE int32 = 20
 )
 
 type Broker struct {
@@ -88,7 +88,6 @@ func (b *Broker) Produce(ctx context.Context, req *proto.ProduceRequest) (*proto
 	partitionID := int(req.PartitionId)
 	topicPartitionID := fmt.Sprintf("%s-%d", req.TopicName, partitionID)
 	topicPartition, _ := b.data.LoadOrStore(topicPartitionID, make([]*proto.ConsumerMessage, 0))
-
 	topicPartitionData := topicPartition.([]*proto.ConsumerMessage)
 
 	// Getting Offset from the last record in the partition
@@ -135,7 +134,7 @@ func (b *Broker) Consume(ctx context.Context, req *proto.ConsumeRequest) (*proto
 		return nil, status.Error(codes.NotFound, "Topic-partition not found in broker")
 	}
 
-	baseOffset := currConsumerOffset[topicPartitionId]
+	currOffset := int32(currConsumerOffset[topicPartitionId])
 
 	topicPartition, ok := b.data.Load(topicPartitionId)
 
@@ -147,9 +146,12 @@ func (b *Broker) Consume(ctx context.Context, req *proto.ConsumeRequest) (*proto
 
 	topicPartitionData := topicPartition.([]*proto.ConsumerMessage)
 
+	baseOffset := topicPartitionData[0].Offset
+	startOffset := currOffset - baseOffset
+
 	batchMsgs := make([]*proto.ConsumerMessage, MAX_BATCH_SIZE)
 
-	endOffset := min(baseOffset+MAX_BATCH_SIZE, len(topicPartitionData))
+	endOffset := min(startOffset+MAX_BATCH_SIZE, len(topicPartitionData))
 
 	copy(batchMsgs, topicPartitionData[baseOffset:endOffset])
 	resp := &proto.ConsumeResponse{

@@ -19,7 +19,7 @@ import (
 type Controller struct {
 	proto.UnimplementedControllerServiceServer
 	mu           sync.RWMutex // Ensures thread-safe access to metadata
-	Metadata     *Metadata    // Stores cluster metadata
+	Metadata     *Metadata    // Stores cluster metadata, has brokerInfos and topicInfos
 	BrokerStatus map[string]time.Time
 	logger       logrus.Entry
 }
@@ -46,69 +46,62 @@ func (c *Controller) RegisterBroker(ctx context.Context, req *proto.RegisterBrok
 	brokerAddr := req.BrokerAddress
 	// Check if the broker already exists
 	if _, exists := c.Metadata.BrokerInfos[brokerName]; exists {
-		warn := fmt.Sprintf("Broker %s is already registered.", brokerName)
+		warn := fmt.Sprintf("Broker %s is already registered", brokerName)
 		c.logger.WithField("Topic", DController).Warnf(warn)
 		return nil, status.Error(codes.AlreadyExists, warn)
 	}
 
 	// Add the broker to the metadata
 	c.Metadata.BrokerInfos[brokerName] = &BrokerInfo{
-		BrokerName:   brokerName,
-		NodeAddr:     brokerAddr,
-		HostedTopics: make(map[string]*TopicInfo),
+		BrokerName: brokerName,
+		NodeAddr:   brokerAddr,
 	}
 	c.BrokerStatus[brokerName] = time.Now()
 	c.logger.WithField("Topic", DController).Infof("Broker %s registered at %s.", brokerName, brokerAddr)
 	return &proto.RegisterBrokerResponse{}, nil
 }
 
-// CreateTopic creates a new topic and assigns partitions to brokers.
-func (c *Controller) CreateTopic(topicName string, partitionCount int, replicationFactor int) error {
+// GetTopic creates a new topic and assigns partitions to brokers if not exists, and return the partition metadata to producer
+func (c *Controller) GetTopic(ctx context.Context, req *proto.ProducerTopicInfoRequest) (*proto.ProducerTopicInfoResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Check if the topic already exists
-	if _, exists := c.Metadata.TopicInfos[topicName]; exists {
-		err := fmt.Errorf("topic %s already exists", topicName)
-		c.logger.WithField("Topic", DController).Warnf(err.Error())
-		return err
-	}
-
-	// Create the topic and partitions
-	topic := &TopicInfo{
-		TopicName:         topicName,
-		TopicPartitions:   make(map[int]*PartitionInfo, partitionCount),
-		ReplicationFactor: replicationFactor,
-	}
-
-	// Assign partitions to brokers
-	brokerIDs := c.getActiveBrokerIDs()
-	if len(brokerIDs) == 0 {
-		err := fmt.Errorf("no active brokers available to assign partitions for topic %s", topicName)
-		c.logger.WithField("Topic", DController).Errorf(err.Error())
-		return err
-	}
-
-	for i := 0; i < partitionCount; i++ {
-		leaderBroker := brokerIDs[i%len(brokerIDs)]
-		//replicas := c.selectReplicas(brokerIDs, leaderBroker, replicationFactor)
-		// partitionID := fmt.Sprintf("%s-%d", topicName, i)
-		partition := &PartitionInfo{
-			PartitionID: i,
-			IsLeader:    true,
+	// Return the partition metadata if the topic already exists
+	if _, exists := c.Metadata.TopicInfos[req.TopicName]; exists {
+		arr := c.Metadata.getTopicPartitions(req.TopicName)
+		resp := &proto.ProducerTopicInfoResponse{
+			TopicName:  req.TopicName,
+			Partitions: arr,
 		}
-
-		// Assign partition to topic
-		topic.TopicPartitions[i] = partition
-
-		// Update brokerInfo
-		c.Metadata.BrokerInfos[leaderBroker].HostedTopics[topicName] = topic
+		return resp, nil
 	}
 
-	// Add the topic to metadata
-	c.Metadata.TopicInfos[topicName] = topic
-	c.logger.Infof("Topic %s with %d partitions created.", topicName, partitionCount)
-	return nil
+	// Get healthy brokers first, if no brokers are available, return an error
+	brokerIDs := c.getActiveBrokerIDs()
+
+	if len(brokerIDs) == 0 {
+		err := fmt.Errorf("no active brokers available to assign partitions for topic %s", req.TopicName)
+		c.logger.WithField("Topic", DController).Errorf(err.Error())
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+
+	c.Metadata.createTopic(req.TopicName, int(*req.NumPartitions), int(*req.ReplicationFactor))
+
+	// TODO - select brokers for replicas
+	// Assign partitions to brokers, wrap around if needed
+	for idx := 0; idx < int(*req.NumPartitions); idx++ {
+		c.Metadata.assignTopicPartitionToBroker(req.TopicName, idx, brokerIDs[idx%len(brokerIDs)])
+	}
+
+	c.logger.Infof("Topic %s with %d partitions created.", req.TopicName, *req.NumPartitions)
+
+	partitionsArr := c.Metadata.getTopicPartitions(req.TopicName)
+
+	resp := &proto.ProducerTopicInfoResponse{
+		TopicName:  req.TopicName,
+		Partitions: partitionsArr,
+	}
+	return resp, nil
 }
 
 // GetMetadata returns the current cluster metadata.
@@ -137,10 +130,8 @@ func (c *Controller) Heartbeat(ctx context.Context, req *proto.HeartbeatRequest)
 	return resp, nil
 }
 
-// getActiveBrokerIDs returns a list of active broker IDs.
+// getActiveBrokerIDs returns a list of active broker IDs, not thread-safe
 func (c *Controller) getActiveBrokerIDs() []string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	return slices.Collect(maps.Keys(c.BrokerStatus))
 }
 

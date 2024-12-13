@@ -1,7 +1,6 @@
 package test
 
 import (
-	"context"
 	"kueue/kueue"
 	"kueue/kueue/proto"
 	"testing"
@@ -12,7 +11,7 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 )
 
-func makeBroker(t *testing.T) *kueue.Broker {
+func TestMakeBroker(t *testing.T) {
 	bi := &kueue.BrokerInfo{
 		BrokerName:   "broker1",
 		NodeAddr:     "127.0.0.1:8001",
@@ -20,7 +19,6 @@ func makeBroker(t *testing.T) *kueue.Broker {
 	}
 	b, err := kueue.NewBroker(bi, "127.0.0.1:8000", *logrus.WithFields(logrus.Fields{}))
 	assert.NoError(t, err)
-	return b
 }
 
 func TestBroker(t *testing.T) {
@@ -45,10 +43,10 @@ func TestBroker(t *testing.T) {
 
 	client := proto.NewBrokerServiceClient(conn)
 
-	client.ProduceMessage(context.Background(), &proto.ProduceRequest{
-		TopicName: "topic1",
-		ProducerId: "producer1",
-		Message: &proto.Message{
-	})
+	// client.ProduceMessage(context.Background(), &proto.ProduceRequest{
+	// 	TopicName: "topic1",
+	// 	ProducerId: "producer1",
+	// 	Message: &proto.Message{
+	// })
 
 }
