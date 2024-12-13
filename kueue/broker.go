@@ -108,7 +108,7 @@ func (b *Broker) Produce(ctx context.Context, req *proto.ProduceRequest) (*proto
 		}
 		topicPartitionData = append(topicPartitionData, consumerMsg)
 		nextOffset++
-		b.persistData(topicPartitionID, consumerMsg)
+		go b.persistData(topicPartitionID, consumerMsg)
 		
 	}
 
@@ -124,6 +124,9 @@ func (b *Broker) Produce(ctx context.Context, req *proto.ProduceRequest) (*proto
 
 
 func (b *Broker) persistData(topicPartitionId string, msg *proto.ConsumerMessage) {
+	b.messageCountMu.Lock()
+    defer b.messageCountMu.Unlock()
+
     dirPath := filepath.Join(b.BrokerInfo.BrokerName, topicPartitionId)
     err := os.MkdirAll(dirPath, 0755)
     if err != nil {
@@ -131,6 +134,7 @@ func (b *Broker) persistData(topicPartitionId string, msg *proto.ConsumerMessage
         return
     }
 
+	
     // Serialize the message
     dataBytes, err := proto1.Marshal(msg)
     if err != nil {
@@ -145,28 +149,24 @@ func (b *Broker) persistData(topicPartitionId string, msg *proto.ConsumerMessage
 	filePath := filepath.Join(dirPath, fileName)
 
 
-	go func() {
-		b.messageCountMu.Lock()
-        defer b.messageCountMu.Unlock()
 
-        // Open the file in append mode, create it if it doesn't exist
-        file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-        if err != nil {
-            b.logger.Printf("Failed to open file %s: %v", filePath, err)
-            return
-        }
-        defer file.Close()
+	// Open the file in append mode
+	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		b.logger.Printf("Failed to open file %s: %v", filePath, err)
+		return
+	}
+	defer file.Close()
 
-        // Write the serialized message to the file
-        _, err = file.Write(dataBytes)
-        if err != nil {
-            b.logger.Printf("Failed to write to file %s: %v", filePath, err)
-            return
-        }
+	_, err = file.Write(dataBytes)
+	if err != nil {
+		b.logger.Printf("Failed to write to file %s: %v", filePath, err)
+		return
+	}
 
-		b.MessageCount[topicPartitionId]++
+	b.MessageCount[topicPartitionId]++
 
-    }()
+
     
 }
 
