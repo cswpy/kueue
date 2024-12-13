@@ -150,13 +150,6 @@ func (b *Broker) Consume(ctx context.Context, req *proto.ConsumeRequest) (*proto
 	return resp, nil
 }
 
-// func (b *Broker) AddConsumer(ctx context.Context, req *proto.AddConsumerRequest) (*proto.AddConsumerResponse, error) {
-// 	topicPartitionID := fmt.Sprintf("%s-%d", req.TopicName, req.PartitionId)
-// 	b.offsetLock.Lock()
-// 	b.consumerOffset[req.ConsumerId][topicPartitionID] = 0
-// 	b.offsetLock.Unlock()
-// 	return nil, nil
-// }
 
 func (b *Broker) SendHeartbeat() {
 

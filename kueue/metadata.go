@@ -5,7 +5,8 @@ package kueue
 
 import (
 	"fmt"
-	"kueue/kueue/proto"
+	"maps"
+	"slices"
 
 	_ "github.com/sirupsen/logrus"
 )
@@ -14,13 +15,21 @@ import (
 // TopicInfos: this is where all topic-partitions related data resides
 // BrokerInfos: a map from brokerName to brokerInfo
 type Metadata struct {
-	BrokerInfos map[string]*BrokerInfo // broker id to brokerInfo, only read data from BrokerInfo.HostedTopics
+	BrokerInfos map[string]*BrokerInfo // broker id to brokerInfo
 
 	// topic name to TopicInfo, then to PartitionInfo
 	// PartitionInfo has a *BrokerInfo pointer, which points to Metadata.BrokerInfos
 	// Modifying Metadata.BrokerInfos will affect the *BrokerInfo pointer stored in Metadata.TopicInfos.PartitionInfo
-	TopicInfos   map[string]*TopicInfo //
+	TopicInfos   map[string]*TopicInfo
 	ControllerID string
+}
+
+func MakeNewMetadata(controllerID string) *Metadata {
+	return &Metadata{
+		BrokerInfos:  make(map[string]*BrokerInfo),
+		TopicInfos:   make(map[string]*TopicInfo),
+		ControllerID: controllerID,
+	}
 }
 
 // Creates a topic and place its TopicInfo in Metadata.TopicInfos
@@ -29,12 +38,12 @@ type Metadata struct {
 func (m *Metadata) createTopic(topicName string, numPartitions int, replicationFactor int) *TopicInfo {
 	ti := &TopicInfo{
 		TopicName:         topicName,
-		TopicPartitions:   make(map[int]*PartitionInfo),
+		Partitions:        make(map[int]*PartitionInfo),
 		ReplicationFactor: replicationFactor,
 	}
 
 	for i := 0; i < numPartitions; i++ {
-		ti.TopicPartitions[i] = &PartitionInfo{
+		ti.Partitions[i] = &PartitionInfo{
 			PartitionID: i,
 			IsLeader:    true,
 		}
@@ -53,12 +62,12 @@ func (m *Metadata) assignTopicPartitionToBroker(topicName string, partitionId in
 	}
 
 	ti := m.TopicInfos[topicName]
-	if _, ok := ti.TopicPartitions[partitionId]; !ok {
+	if _, ok := ti.Partitions[partitionId]; !ok {
 		err := fmt.Errorf("partition %d does not exist", partitionId)
 		return err
 	}
 
-	partition := ti.TopicPartitions[partitionId]
+	partition := ti.Partitions[partitionId]
 
 	if _, ok := m.BrokerInfos[brokerName]; !ok {
 		err := fmt.Errorf("broker %s does not exist", brokerName)
@@ -69,18 +78,8 @@ func (m *Metadata) assignTopicPartitionToBroker(topicName string, partitionId in
 	return nil
 }
 
-// TODO handle replication
-// Caller should check if the topic exists before calling this function
-func (m *Metadata) getTopicPartitions(topicName string) []*proto.PartitionMetadata {
-
-	ti := m.TopicInfos[topicName]
-	partitionInfoArr := make([]*proto.PartitionMetadata, 0)
-	for _, partition := range ti.TopicPartitions {
-		partitionInfoArr = append(partitionInfoArr, &proto.PartitionMetadata{
-			PartitionId:   int32(partition.PartitionID),
-			LeaderAddress: partition.OwnerBroker.NodeAddr,
-		})
-	}
-
-	return partitionInfoArr
+// // TODO handle replication
+// // Caller should check if the topic exists before calling this function
+func (m *Metadata) getPartitions(topicName string) []*PartitionInfo {
+	return slices.Collect(maps.Values(m.TopicInfos[topicName].Partitions))
 }

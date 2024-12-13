@@ -1,19 +1,29 @@
 package kueue
 
+import "kueue/kueue/proto"
+
 type BrokerInfo struct {
 	BrokerName string // unique name of the broker
 	NodeAddr   string // address of the broker
 }
 
 type PartitionInfo struct {
-	PartitionID int         // unique id of the partition
-	OwnerBroker *BrokerInfo // the broker that owns this partition
-	IsLeader    bool
+	PartitionID       int         // unique id of the partition
+	OwnerBroker       *BrokerInfo // the broker that owns this partition
+	AssignedConsumers []string
+	IsLeader          bool
+}
+
+func (pi *PartitionInfo) getProto() *proto.PartitionMetadata {
+	return &proto.PartitionMetadata{
+		PartitionId:   int32(pi.PartitionID),
+		LeaderAddress: pi.OwnerBroker.NodeAddr,
+	}
 }
 
 type TopicInfo struct {
 	TopicName         string                 // unique name of the topic
-	TopicPartitions   map[int]*PartitionInfo // partition id to partition info
+	Partitions        map[int]*PartitionInfo // partition id to partition info
 	ReplicationFactor int                    // replication factor of each partition
 }
 
