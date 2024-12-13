@@ -23,7 +23,6 @@ type Broker struct {
 	proto.UnimplementedBrokerServiceServer
 
 	BrokerInfo     *BrokerInfo
-	infoLock       sync.Mutex
 	ControllerAddr string
 	client         proto.ControllerServiceClient
 	logger         logrus.Entry
@@ -140,6 +139,11 @@ func (b *Broker) Consume(ctx context.Context, req *proto.ConsumeRequest) (*proto
 		TopicName: req.TopicName,
 		Records:   batchMsgs,
 	}
+
+	b.offsetLock.Lock()
+	b.consumerOffset[req.ConsumerId][topicPartitionId] = int(endIndex)
+	b.offsetLock.Unlock()
+
 	return resp, nil
 }
 
