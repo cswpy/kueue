@@ -5,6 +5,7 @@ option go_package = "kueue/kueue/proto";
 service BrokerService {
   rpc ProduceMessage (ProduceRequest) returns (ProduceResponse);
   rpc ConsumeMessage (ConsumeRequest) returns (ConsumeResponse);
+  // rpc AddConsumer (AddConsumerRequest) returns (AddConsumerResponse); // not needed? if a consumer visits a broker for the first time, it will be added automatically
   // rpc ReplicateMessage (ReplicateRequest) returns (ReplicateResponse); // Not implemented yet
 }
 
@@ -12,7 +13,7 @@ service BrokerService {
 message ProduceRequest {
   string topic_name = 1;
   string producer_id = 2;
-  int32 partition_id = 3;
+  int32 partition_id = 3; // determined by the key-hash
   repeated ProducerMessage messages = 4;
 }
 
@@ -43,3 +44,11 @@ message ConsumerMessage {
   string key = 3;
   string value = 4;
 }
+
+// message AddConsumerRequest {
+//   string topic_name = 1;
+//   int32 partition_id = 2;
+//   string consumer_id = 3;
+// }
+
+// message AddConsumerResponse {}

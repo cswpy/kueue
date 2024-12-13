@@ -83,8 +83,9 @@ func (p *Producer) CreateTopic(ctx context.Context, topicName string, partitionC
 	return nil
 }
 
+// TODO: Only one Produce API with batched functionalities, send N requests to N brokers, where N is the number of partitions
 // Produce sends a message to the appropriate broker partition.
-func (p *Producer) Produce(ctx context.Context, topic string, key string, value string) error {
+func (p *Producer) Produce(ctx context.Context, topic string, key []string, value []string) error {
 	const maxRetries = 3
 	var lastErr error
 	for i := 0; i < maxRetries; i++ {

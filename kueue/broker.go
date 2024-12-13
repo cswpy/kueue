@@ -29,12 +29,11 @@ type Broker struct {
 	proto.UnimplementedBrokerServiceServer
 
 	BrokerInfo     *BrokerInfo
-	infoLock       sync.Mutex
 	ControllerAddr string
 	client         proto.ControllerServiceClient
 	logger         logrus.Entry
-	Data           *xsync.Map                 // topic_partition_id -> list of records, save protobuf messages directly for simplicity; uses xsync.Map for concurrent access
-	ConsumerOffset map[string]map[string]int // consumer_id -> topic_partition_id -> offset
+	data           *xsync.Map       // topic_partition_id -> list of records, save protobuf messages directly for simplicity; uses xsync.Map for concurrent access
+	consumerOffset map[string]int32 // consumer_id_topic_partition_id -> offset
 	offsetLock     sync.RWMutex
 	MessageCount   map[string]int    
 	// messageCountMu sync.Mutex 
@@ -201,37 +200,115 @@ func (b *Broker) persistData(topicPartitionId string, msg *proto.ConsumerMessage
 // }
 
 
+
+func (b *Broker) persistData(topicPartitionId string, msg *proto.ConsumerMessage) {
+	// b.messageCountMu.Lock()
+    // defer b.messageCountMu.Unlock()
+
+    dirPath := filepath.Join(b.BrokerInfo.BrokerName, topicPartitionId)
+    err := os.MkdirAll(dirPath, 0755)
+    if err != nil {
+        b.logger.Fatalf("Failed to create directory: %v", err)
+        return
+    }
+
+	
+    // Serialize the message
+    dataBytes, err := proto1.Marshal(msg)
+    if err != nil {
+        b.logger.Printf("Failed to marshal message: %v", err)
+        return
+    }
+
+
+    // messageCount := b.MessageCount[topicPartitionId]
+	messageCount := msg.Offset
+    fileIndex := (int(messageCount) / b.BrokerInfo.PersistBatch) * b.BrokerInfo.PersistBatch
+    fileName := fmt.Sprintf("%010d.bin", fileIndex)
+	filePath := filepath.Join(dirPath, fileName)
+
+
+
+	// Open the file in append mode
+	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		b.logger.Printf("Failed to open file %s: %v", filePath, err)
+		return
+	}
+	defer file.Close()
+
+	_, err = file.Write(dataBytes)
+	if err != nil {
+		b.logger.Printf("Failed to write to file %s: %v", filePath, err)
+		return
+	}
+
+	// b.MessageCount[topicPartitionId]++
+
+
+    
+}
+
+
+// func (b *Broker) persistConsumerOffset(topicPartitionId string) {
+//     dirPath := b.BrokerInfo.BrokerName+"/"+topicPartitionId
+//     err := os.MkdirAll(dirPath, 0755)
+//     if err != nil {
+//         b.logger.Fatalf("Failed to create directory: %v", err)
+//         return
+//     }
+
+// 	fileName := fmt.Sprintf("%s-offset.bin", topicPartitionId)
+//     filePath := filepath.Join(dirPath, fileName)
+
+//     file, err := os.Create(filePath)
+//     if err != nil {
+//         b.logger.Fatalf("Failed to create file: %v", err)
+//         return
+//     }
+//     defer file.Close()
+
+//     encoder := gob.NewEncoder(file)
+//     err = encoder.Encode(b.ConsumerOffset)
+//     if err != nil {
+//         b.logger.Printf("Failed to encode consumer offsets: %v", err)
+//     }
+// }
+
+
+// TODO: handle the case where new consumers start consuming from the beginning of the topic-partition, which is not in main memory but on disk
+// Consume returns a batch of messages from a topic-partition, it checks whether the topic-partition exists in the broker's data
+// if not, it means the request is probably unauthorized/meant for another broker; then checks if there is any message to consume;
+// it creates an offset for new consumers
 func (b *Broker) Consume(ctx context.Context, req *proto.ConsumeRequest) (*proto.ConsumeResponse, error) {
 	b.logger.WithField("Topic", DBroker).Debugf("Received Consume request: %v", req)
 
-	b.offsetLock.Lock()
-	defer b.offsetLock.Unlock()
-
-	if _, ok := b.ConsumerOffset[req.ConsumerId]; !ok {
-		return nil, status.Error(codes.NotFound, "Consumer not found")
-	}
-
-	currConsumerOffset := b.ConsumerOffset[req.ConsumerId]
 	topicPartitionId := fmt.Sprintf("%s-%d", req.TopicName, req.PartitionId)
-	if _, ok := currConsumerOffset[topicPartitionId]; !ok {
-		return nil, status.Error(codes.NotFound, "Topic-partition not found in broker")
-	}
+	topicPartition, ok := b.data.Load(topicPartitionId)
 
-	currMsgOffset := int32(currConsumerOffset[topicPartitionId])
-
-	topicPartition, ok := b.Data.Load(topicPartitionId)
-
+	// Check if the topic-partition exists in the broker's data
 	if !ok {
 		err := fmt.Errorf("topic-partition %s not found in broker %v data", topicPartitionId, b.BrokerInfo.BrokerName)
 		b.logger.Fatal(err)
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
+	// Check topic-partition data size
 	topicPartitionData := topicPartition.([]*proto.ConsumerMessage)
-
 	if len(topicPartitionData) == 0 {
 		return nil, status.Error(codes.FailedPrecondition, "topic-partition is empty")
 	}
+
+	b.offsetLock.Lock()
+	defer b.offsetLock.Unlock()
+
+	// Create offset for new consumers
+	offsetLookupKey := fmt.Sprintf("%s-%s", req.ConsumerId, topicPartitionId)
+	if _, ok := b.consumerOffset[offsetLookupKey]; !ok {
+		b.consumerOffset[offsetLookupKey] = 0
+	}
+
+	currMsgOffset := b.consumerOffset[offsetLookupKey]
 
 	baseMsgOffset := topicPartitionData[0].Offset
 	beginIndex := currMsgOffset - baseMsgOffset
@@ -245,8 +322,14 @@ func (b *Broker) Consume(ctx context.Context, req *proto.ConsumeRequest) (*proto
 		TopicName: req.TopicName,
 		Records:   batchMsgs,
 	}
+
+	b.offsetLock.Lock()
+	b.consumerOffset[offsetLookupKey] = int32(endIndex)
+	b.offsetLock.Unlock()
+
 	return resp, nil
 }
+
 
 func (b *Broker) SendHeartbeat() {
 

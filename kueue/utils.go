@@ -1,8 +1,10 @@
 package kueue
 
-func min(a, b int) int {
-	if a < b {
-		return a
+func contains(slice []string, target string) bool {
+	for _, v := range slice {
+		if v == target {
+			return true
+		}
 	}
-	return b
+	return false
 }
