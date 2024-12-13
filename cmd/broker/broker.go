@@ -146,6 +146,9 @@ func main() {
    
 	   // Wait for all producers to finish
 	   wg.Wait()
+
+
+   
    
 	   // Log the MessageCount for topic1-1
 	//    broker.messageCountMu.Lock()

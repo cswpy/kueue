@@ -5,14 +5,15 @@ import (
 	// "encoding/gob"
 	"fmt"
 	"kueue/kueue/proto"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
-	"log"
 
 	"github.com/puzpuzpuz/xsync"
 	"github.com/sirupsen/logrus"
+	// "golang.org/x/text/message"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -36,7 +37,7 @@ type Broker struct {
 	ConsumerOffset map[string]map[string]int // consumer_id -> topic_partition_id -> offset
 	offsetLock     sync.RWMutex
 	MessageCount   map[string]int    
-	messageCountMu sync.Mutex 
+	// messageCountMu sync.Mutex 
 }
 
 func NewBroker(info *BrokerInfo, controllerAddr string, logger logrus.Entry,) (*Broker, error) {
@@ -74,7 +75,7 @@ func NewBroker(info *BrokerInfo, controllerAddr string, logger logrus.Entry,) (*
 		Data: 		 	xsync.NewMap(), // Initialize the xsync.Map
 		ConsumerOffset: make(map[string]map[string]int),
 		logger:         logger,
-		MessageCount:   make(map[string]int),
+		// MessageCount:   make(map[string]int),
 	}, nil
 }
 
@@ -84,8 +85,10 @@ func (b *Broker) Produce(ctx context.Context, req *proto.ProduceRequest) (*proto
 	partitionID := int(req.PartitionId)
 	topicPartitionID := fmt.Sprintf("%s-%d", req.TopicName, partitionID)
 
-	b.messageCountMu.Lock()
-    defer b.messageCountMu.Unlock()
+	// b.messageCountMu.Lock()
+    // defer b.messageCountMu.Unlock()
+	b.offsetLock.Lock()
+	defer b.offsetLock.Unlock()
 	
 	topicPartition, _ := b.Data.LoadOrStore(topicPartitionID, make([]*proto.ConsumerMessage, 0))
 	topicPartitionData := topicPartition.([]*proto.ConsumerMessage)
@@ -124,8 +127,8 @@ func (b *Broker) Produce(ctx context.Context, req *proto.ProduceRequest) (*proto
 
 
 func (b *Broker) persistData(topicPartitionId string, msg *proto.ConsumerMessage) {
-	b.messageCountMu.Lock()
-    defer b.messageCountMu.Unlock()
+	// b.messageCountMu.Lock()
+    // defer b.messageCountMu.Unlock()
 
     dirPath := filepath.Join(b.BrokerInfo.BrokerName, topicPartitionId)
     err := os.MkdirAll(dirPath, 0755)
@@ -143,8 +146,9 @@ func (b *Broker) persistData(topicPartitionId string, msg *proto.ConsumerMessage
     }
 
 
-    messageCount := b.MessageCount[topicPartitionId]
-    fileIndex := (messageCount / b.BrokerInfo.PersistBatch) * b.BrokerInfo.PersistBatch
+    // messageCount := b.MessageCount[topicPartitionId]
+	messageCount := msg.Offset
+    fileIndex := (int(messageCount) / b.BrokerInfo.PersistBatch) * b.BrokerInfo.PersistBatch
     fileName := fmt.Sprintf("%010d.bin", fileIndex)
 	filePath := filepath.Join(dirPath, fileName)
 
@@ -164,7 +168,7 @@ func (b *Broker) persistData(topicPartitionId string, msg *proto.ConsumerMessage
 		return
 	}
 
-	b.MessageCount[topicPartitionId]++
+	// b.MessageCount[topicPartitionId]++
 
 
     
