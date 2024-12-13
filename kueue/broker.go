@@ -32,7 +32,7 @@ type Broker struct {
 	ControllerAddr string
 	client         proto.ControllerServiceClient
 	logger         logrus.Entry
-	data           *xsync.Map       // topic_partition_id -> list of records, save protobuf messages directly for simplicity; uses xsync.Map for concurrent access
+	Data           *xsync.Map       // topic_partition_id -> list of records, save protobuf messages directly for simplicity; uses xsync.Map for concurrent access
 	consumerOffset map[string]int32 // consumer_id_topic_partition_id -> offset
 	offsetLock     sync.RWMutex
 	MessageCount   map[string]int    
@@ -72,7 +72,6 @@ func NewBroker(info *BrokerInfo, controllerAddr string, logger logrus.Entry,) (*
 		ControllerAddr: controllerAddr,
 		client:         client,
 		Data: 		 	xsync.NewMap(), // Initialize the xsync.Map
-		ConsumerOffset: make(map[string]map[string]int),
 		logger:         logger,
 		// MessageCount:   make(map[string]int),
 	}, nil
@@ -201,53 +200,53 @@ func (b *Broker) persistData(topicPartitionId string, msg *proto.ConsumerMessage
 
 
 
-func (b *Broker) persistData(topicPartitionId string, msg *proto.ConsumerMessage) {
-	// b.messageCountMu.Lock()
-    // defer b.messageCountMu.Unlock()
+// func (b *Broker) persistData(topicPartitionId string, msg *proto.ConsumerMessage) {
+// 	// b.messageCountMu.Lock()
+//     // defer b.messageCountMu.Unlock()
 
-    dirPath := filepath.Join(b.BrokerInfo.BrokerName, topicPartitionId)
-    err := os.MkdirAll(dirPath, 0755)
-    if err != nil {
-        b.logger.Fatalf("Failed to create directory: %v", err)
-        return
-    }
+//     dirPath := filepath.Join(b.BrokerInfo.BrokerName, topicPartitionId)
+//     err := os.MkdirAll(dirPath, 0755)
+//     if err != nil {
+//         b.logger.Fatalf("Failed to create directory: %v", err)
+//         return
+//     }
 
 	
-    // Serialize the message
-    dataBytes, err := proto1.Marshal(msg)
-    if err != nil {
-        b.logger.Printf("Failed to marshal message: %v", err)
-        return
-    }
+//     // Serialize the message
+//     dataBytes, err := proto1.Marshal(msg)
+//     if err != nil {
+//         b.logger.Printf("Failed to marshal message: %v", err)
+//         return
+//     }
 
 
-    // messageCount := b.MessageCount[topicPartitionId]
-	messageCount := msg.Offset
-    fileIndex := (int(messageCount) / b.BrokerInfo.PersistBatch) * b.BrokerInfo.PersistBatch
-    fileName := fmt.Sprintf("%010d.bin", fileIndex)
-	filePath := filepath.Join(dirPath, fileName)
+//     // messageCount := b.MessageCount[topicPartitionId]
+// 	messageCount := msg.Offset
+//     fileIndex := (int(messageCount) / b.BrokerInfo.PersistBatch) * b.BrokerInfo.PersistBatch
+//     fileName := fmt.Sprintf("%010d.bin", fileIndex)
+// 	filePath := filepath.Join(dirPath, fileName)
 
 
 
-	// Open the file in append mode
-	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		b.logger.Printf("Failed to open file %s: %v", filePath, err)
-		return
-	}
-	defer file.Close()
+// 	// Open the file in append mode
+// 	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+// 	if err != nil {
+// 		b.logger.Printf("Failed to open file %s: %v", filePath, err)
+// 		return
+// 	}
+// 	defer file.Close()
 
-	_, err = file.Write(dataBytes)
-	if err != nil {
-		b.logger.Printf("Failed to write to file %s: %v", filePath, err)
-		return
-	}
+// 	_, err = file.Write(dataBytes)
+// 	if err != nil {
+// 		b.logger.Printf("Failed to write to file %s: %v", filePath, err)
+// 		return
+// 	}
 
-	// b.MessageCount[topicPartitionId]++
+// 	// b.MessageCount[topicPartitionId]++
 
 
     
-}
+// }
 
 
 // func (b *Broker) persistConsumerOffset(topicPartitionId string) {
@@ -284,7 +283,7 @@ func (b *Broker) Consume(ctx context.Context, req *proto.ConsumeRequest) (*proto
 	b.logger.WithField("Topic", DBroker).Debugf("Received Consume request: %v", req)
 
 	topicPartitionId := fmt.Sprintf("%s-%d", req.TopicName, req.PartitionId)
-	topicPartition, ok := b.data.Load(topicPartitionId)
+	topicPartition, ok := b.Data.Load(topicPartitionId)
 
 	// Check if the topic-partition exists in the broker's data
 	if !ok {

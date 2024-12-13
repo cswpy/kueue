@@ -68,7 +68,6 @@ func main() {
 	bi := &kueue.BrokerInfo{
 		BrokerName:   *brokerName,
 		NodeAddr:     *brokerServiceAddr,
-		HostedTopics: make(map[string]*kueue.TopicInfo),
 		PersistBatch: *persistBatch,
 	}
 	logger.Printf("Connecting to controller at %s", *controllerAddr)
