@@ -28,7 +28,7 @@ type ProduceRequest struct {
 
 	TopicName   string             `protobuf:"bytes,1,opt,name=topic_name,json=topicName,proto3" json:"topic_name,omitempty"`
 	ProducerId  string             `protobuf:"bytes,2,opt,name=producer_id,json=producerId,proto3" json:"producer_id,omitempty"`
-	PartitionId int32              `protobuf:"varint,3,opt,name=partition_id,json=partitionId,proto3" json:"partition_id,omitempty"`
+	PartitionId int32              `protobuf:"varint,3,opt,name=partition_id,json=partitionId,proto3" json:"partition_id,omitempty"` // determined by the key-hash
 	Messages    []*ProducerMessage `protobuf:"bytes,4,rep,name=messages,proto3" json:"messages,omitempty"`
 }
 

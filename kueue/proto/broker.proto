@@ -12,7 +12,7 @@ service BrokerService {
 message ProduceRequest {
   string topic_name = 1;
   string producer_id = 2;
-  int32 partition_id = 3;
+  int32 partition_id = 3; // determined by the key-hash
   repeated ProducerMessage messages = 4;
 }
 
