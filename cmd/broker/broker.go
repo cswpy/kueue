@@ -60,6 +60,8 @@ func main() {
 
 	proto.RegisterBrokerServiceServer(grpcServer, broker)
 
+	
+
 	go broker.SendHeartbeat()
 	grpcServer.Serve(lis)
 }
