@@ -16,7 +16,7 @@ import (
 )
 
 var (
-	MAX_BATCH_SIZE int32 = 20
+	MAX_BATCH_SIZE int = 20
 )
 
 type Broker struct {
@@ -29,6 +29,15 @@ type Broker struct {
 	data           *xsync.Map       // topic_partition_id -> list of records, save protobuf messages directly for simplicity; uses xsync.Map for concurrent access
 	consumerOffset map[string]int32 // consumer_id_topic_partition_id -> offset
 	offsetLock     sync.RWMutex
+}
+
+// NewMockBroker creates a new broker with an in-memory data store, incapable of communicating with gRPC services
+func NewMockBroker(logger logrus.Entry) *Broker {
+	return &Broker{
+		logger:         logger,
+		data:           xsync.NewMap(),
+		consumerOffset: make(map[string]int32),
+	}
 }
 
 func NewBroker(info *BrokerInfo, controllerAddr string, logger logrus.Entry) (*Broker, error) {
@@ -57,6 +66,7 @@ func NewBroker(info *BrokerInfo, controllerAddr string, logger logrus.Entry) (*B
 		client:         client,
 		logger:         logger,
 		data:           xsync.NewMap(),
+		consumerOffset: make(map[string]int32),
 	}, nil
 }
 
@@ -131,11 +141,11 @@ func (b *Broker) Consume(ctx context.Context, req *proto.ConsumeRequest) (*proto
 	currMsgOffset := b.consumerOffset[offsetLookupKey]
 
 	baseMsgOffset := topicPartitionData[0].Offset
-	beginIndex := currMsgOffset - baseMsgOffset
+	beginIndex := int(currMsgOffset - baseMsgOffset)
+	endIndex := min(beginIndex+MAX_BATCH_SIZE, len(topicPartitionData))
 
-	batchMsgs := make([]*proto.ConsumerMessage, MAX_BATCH_SIZE)
-
-	endIndex := min(int(beginIndex+MAX_BATCH_SIZE), len(topicPartitionData))
+	numMsgs := endIndex - beginIndex
+	batchMsgs := make([]*proto.ConsumerMessage, numMsgs)
 
 	copy(batchMsgs, topicPartitionData[beginIndex:endIndex])
 	resp := &proto.ConsumeResponse{
@@ -143,13 +153,10 @@ func (b *Broker) Consume(ctx context.Context, req *proto.ConsumeRequest) (*proto
 		Records:   batchMsgs,
 	}
 
-	b.offsetLock.Lock()
 	b.consumerOffset[offsetLookupKey] = int32(endIndex)
-	b.offsetLock.Unlock()
 
 	return resp, nil
 }
-
 
 func (b *Broker) SendHeartbeat() {
 

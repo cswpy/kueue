@@ -5,17 +5,13 @@ import (
 	"kueue/kueue/proto"
 	"testing"
 
-	"github.com/puzpuzpuz/xsync"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestBrokerProduceConsume(t *testing.T) {
 
-	b := Broker{
-		logger: *logrus.WithField("test", "broker"),
-		data:   xsync.NewMap(),
-	}
+	b := NewMockBroker(*logrus.WithField("test", "broker"))
 
 	msgs := []*proto.ProducerMessage{
 		{Key: "key1", Value: "value1"},
