@@ -14,7 +14,10 @@ func TestBrokerProduceConsume(t *testing.T) {
 
 	b := Broker{
 		logger: *logrus.WithField("test", "broker"),
-		data:   xsync.NewMap(),
+		Data:   xsync.NewMap(),
+		BrokerInfo: &BrokerInfo{
+			BrokerName: "BK1",
+		},
 	}
 
 	msgs := []*proto.ProducerMessage{
@@ -51,6 +54,7 @@ func TestBrokerProduceConsume(t *testing.T) {
 		assert.Equal(t, resp2.Records[i].Value, msgs[i].Value)
 	}
 }
+
 
 // func TestBroker(t *testing.T) {
 // 	lis := bufconn.Listen(1024 * 1024)

@@ -35,8 +35,8 @@ type Broker struct {
 	Data           *xsync.Map       // topic_partition_id -> list of records, save protobuf messages directly for simplicity; uses xsync.Map for concurrent access
 	consumerOffset map[string]int32 // consumer_id_topic_partition_id -> offset
 	offsetLock     sync.RWMutex
-	MessageCount   map[string]int    
-	// messageCountMu sync.Mutex 
+	// MessageCount   map[string]int    
+	messageCountMu sync.Mutex 
 }
 
 func NewBroker(info *BrokerInfo, controllerAddr string, logger logrus.Entry,) (*Broker, error) {
@@ -125,8 +125,8 @@ func (b *Broker) Produce(ctx context.Context, req *proto.ProduceRequest) (*proto
 
 
 func (b *Broker) persistData(topicPartitionId string, msg *proto.ConsumerMessage) {
-	// b.messageCountMu.Lock()
-    // defer b.messageCountMu.Unlock()
+	b.messageCountMu.Lock()
+    defer b.messageCountMu.Unlock()
 
     dirPath := filepath.Join(b.BrokerInfo.BrokerName, topicPartitionId)
     err := os.MkdirAll(dirPath, 0755)
