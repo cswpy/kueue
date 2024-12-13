@@ -63,28 +63,6 @@ func NewBroker(info *BrokerInfo, controllerAddr string, logger logrus.Entry) (*B
 func (b *Broker) Produce(ctx context.Context, req *proto.ProduceRequest) (*proto.ProduceResponse, error) {
 	b.logger.WithField("Topic", DBroker).Debugf("Received Produce request: %v", req)
 
-	b.infoLock.Lock()
-
-	// Create topic if it doesn't exist
-	if _, ok := b.BrokerInfo.HostedTopics[req.TopicName]; !ok {
-		b.BrokerInfo.HostedTopics[req.TopicName] = &TopicInfo{
-			TopicName:         req.TopicName,
-			TopicPartitions:   make(map[int]*PartitionInfo),
-			ReplicationFactor: 1,
-		}
-	}
-	topic := b.BrokerInfo.HostedTopics[req.TopicName]
-
-	// Create partition if it doesn't exist
-	if _, ok := topic.TopicPartitions[int(req.PartitionId)]; !ok {
-		topic.TopicPartitions[int(req.PartitionId)] = &PartitionInfo{
-			PartitionID: int(req.PartitionId),
-			IsLeader:    true,
-		}
-	}
-
-	b.infoLock.Unlock()
-
 	partitionID := int(req.PartitionId)
 	topicPartitionID := fmt.Sprintf("%s-%d", req.TopicName, partitionID)
 	topicPartition, _ := b.data.LoadOrStore(topicPartitionID, make([]*proto.ConsumerMessage, 0))
@@ -125,7 +103,7 @@ func (b *Broker) Consume(ctx context.Context, req *proto.ConsumeRequest) (*proto
 	defer b.offsetLock.Unlock()
 
 	if _, ok := b.consumerOffset[req.ConsumerId]; !ok {
-		return nil, status.Error(codes.NotFound, "Consumer not found in broker")
+		return nil, status.Error(codes.NotFound, "Consumer not found")
 	}
 
 	currConsumerOffset := b.consumerOffset[req.ConsumerId]
@@ -134,7 +112,7 @@ func (b *Broker) Consume(ctx context.Context, req *proto.ConsumeRequest) (*proto
 		return nil, status.Error(codes.NotFound, "Topic-partition not found in broker")
 	}
 
-	currOffset := int32(currConsumerOffset[topicPartitionId])
+	currMsgOffset := int32(currConsumerOffset[topicPartitionId])
 
 	topicPartition, ok := b.data.Load(topicPartitionId)
 
@@ -146,14 +124,18 @@ func (b *Broker) Consume(ctx context.Context, req *proto.ConsumeRequest) (*proto
 
 	topicPartitionData := topicPartition.([]*proto.ConsumerMessage)
 
-	baseOffset := topicPartitionData[0].Offset
-	startOffset := currOffset - baseOffset
+	if len(topicPartitionData) == 0 {
+		return nil, status.Error(codes.FailedPrecondition, "topic-partition is empty")
+	}
+
+	baseMsgOffset := topicPartitionData[0].Offset
+	beginIndex := currMsgOffset - baseMsgOffset
 
 	batchMsgs := make([]*proto.ConsumerMessage, MAX_BATCH_SIZE)
 
-	endOffset := min(startOffset+MAX_BATCH_SIZE, len(topicPartitionData))
+	endIndex := min(int(beginIndex+MAX_BATCH_SIZE), len(topicPartitionData))
 
-	copy(batchMsgs, topicPartitionData[baseOffset:endOffset])
+	copy(batchMsgs, topicPartitionData[beginIndex:endIndex])
 	resp := &proto.ConsumeResponse{
 		TopicName: req.TopicName,
 		Records:   batchMsgs,
