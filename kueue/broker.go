@@ -24,7 +24,7 @@ import (
 )
 
 var (
-	MAX_BATCH_SIZE int32 = 20
+	MAX_BATCH_SIZE int = 20
 )
 
 type Broker struct {
@@ -35,13 +35,23 @@ type Broker struct {
 	client         proto.ControllerServiceClient
 	logger         logrus.Entry
 	Data           *xsync.Map       // topic_partition_id -> list of records, save protobuf messages directly for simplicity; uses xsync.Map for concurrent access
+	lock_manager   *xsync.Map       // lock for managing concurrent access to data
 	consumerOffset map[string]int32 // consumer_id_topic_partition_id -> offset
 	offsetLock     sync.RWMutex
-	// MessageCount   map[string]int    
-	messageCountMu sync.Mutex 
 }
 
-func NewBroker(info *BrokerInfo, controllerAddr string, logger logrus.Entry,) (*Broker, error) {
+// NewMockBroker creates a new broker with an in-memory data store, incapable of communicating with gRPC services
+func NewMockBroker(logger logrus.Entry) *Broker {
+	return &Broker{
+		BrokerInfo:     &BrokerInfo{BrokerName: "mock-broker", NodeAddr: "localhost:50051"},
+		logger:         logger,
+		data:           xsync.NewMap(),
+		lock_manager:   xsync.NewMap(),
+		consumerOffset: make(map[string]int32),
+	}
+}
+
+func NewBroker(info *BrokerInfo, controllerAddr string, logger logrus.Entry) (*Broker, error) {
 	var opts []grpc.DialOption
 	opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 
@@ -75,7 +85,9 @@ func NewBroker(info *BrokerInfo, controllerAddr string, logger logrus.Entry,) (*
 		client:         client,
 		Data: 		 	xsync.NewMap(), // Initialize the xsync.Map
 		logger:         logger,
-		// MessageCount:   make(map[string]int),
+		data:           xsync.NewMap(),
+		lock_manager:   xsync.NewMap(),
+		consumerOffset: make(map[string]int32),
 	}, nil
 }
 
@@ -85,12 +97,12 @@ func (b *Broker) Produce(ctx context.Context, req *proto.ProduceRequest) (*proto
 	partitionID := int(req.PartitionId)
 	topicPartitionID := fmt.Sprintf("%s-%d", req.TopicName, partitionID)
 
-	// b.messageCountMu.Lock()
-    // defer b.messageCountMu.Unlock()
-	b.offsetLock.Lock()
-	defer b.offsetLock.Unlock()
-	
-	topicPartition, _ := b.Data.LoadOrStore(topicPartitionID, make([]*proto.ConsumerMessage, 0))
+	lockVal, _ := b.lock_manager.LoadAndStore(topicPartitionID, &sync.RWMutex{})
+	lock := lockVal.(*sync.RWMutex)
+	// Wait for lock before loading data
+	lock.Lock()
+	defer lock.Unlock()
+	topicPartition, _ := b.data.LoadOrStore(topicPartitionID, make([]*proto.ConsumerMessage, 0))
 	topicPartitionData := topicPartition.([]*proto.ConsumerMessage)
 
 	// Getting Offset from the last record in the partition
@@ -109,6 +121,7 @@ func (b *Broker) Produce(ctx context.Context, req *proto.ProduceRequest) (*proto
 			Key:       msg.Key,
 			Value:     msg.Value,
 		}
+		fmt.Printf("nextOffset: %d\n", nextOffset)
 		topicPartitionData = append(topicPartitionData, consumerMsg)
 		nextOffset++
 		b.persistData(topicPartitionID, consumerMsg)
@@ -342,12 +355,19 @@ func (b *Broker) persistData(topicPartitionId string, msg *proto.ConsumerMessage
 func (b *Broker) Consume(ctx context.Context, req *proto.ConsumeRequest) (*proto.ConsumeResponse, error) {
 	b.logger.WithField("Topic", DBroker).Debugf("Received Consume request: %v", req)
 
-	topicPartitionId := fmt.Sprintf("%s-%d", req.TopicName, req.PartitionId)
-	topicPartition, ok := b.Data.Load(topicPartitionId)
+	topicPartitionID := fmt.Sprintf("%s-%d", req.TopicName, req.PartitionId)
+
+	// Wait for read lock
+	lockVal, _ := b.lock_manager.LoadAndStore(topicPartitionID, &sync.RWMutex{})
+	lock := lockVal.(*sync.RWMutex)
+	lock.RLock()
+	defer lock.RUnlock()
+
+	topicPartition, ok := b.data.Load(topicPartitionID)
 
 	// Check if the topic-partition exists in the broker's data
 	if !ok {
-		err := fmt.Errorf("topic-partition %s not found in broker %v data", topicPartitionId, b.BrokerInfo.BrokerName)
+		err := fmt.Errorf("topic-partition %s not found in broker %v data", topicPartitionID, b.BrokerInfo.BrokerName)
 		b.logger.Fatal(err)
 		return nil, status.Error(codes.Internal, err.Error())
 	}
@@ -362,7 +382,7 @@ func (b *Broker) Consume(ctx context.Context, req *proto.ConsumeRequest) (*proto
 	defer b.offsetLock.Unlock()
 
 	// Create offset for new consumers
-	offsetLookupKey := fmt.Sprintf("%s-%s", req.ConsumerId, topicPartitionId)
+	offsetLookupKey := fmt.Sprintf("%s-%s", req.ConsumerId, topicPartitionID)
 	if _, ok := b.consumerOffset[offsetLookupKey]; !ok {
 		b.consumerOffset[offsetLookupKey] = 0
 	}
@@ -370,11 +390,11 @@ func (b *Broker) Consume(ctx context.Context, req *proto.ConsumeRequest) (*proto
 	currMsgOffset := b.consumerOffset[offsetLookupKey]
 
 	baseMsgOffset := topicPartitionData[0].Offset
-	beginIndex := currMsgOffset - baseMsgOffset
+	beginIndex := int(currMsgOffset - baseMsgOffset)
+	endIndex := min(beginIndex+MAX_BATCH_SIZE, len(topicPartitionData))
 
-	batchMsgs := make([]*proto.ConsumerMessage, MAX_BATCH_SIZE)
-
-	endIndex := min(int(beginIndex+MAX_BATCH_SIZE), len(topicPartitionData))
+	numMsgs := endIndex - beginIndex
+	batchMsgs := make([]*proto.ConsumerMessage, numMsgs)
 
 	copy(batchMsgs, topicPartitionData[beginIndex:endIndex])
 	resp := &proto.ConsumeResponse{
@@ -382,13 +402,10 @@ func (b *Broker) Consume(ctx context.Context, req *proto.ConsumeRequest) (*proto
 		Records:   batchMsgs,
 	}
 
-	b.offsetLock.Lock()
 	b.consumerOffset[offsetLookupKey] = int32(endIndex)
-	b.offsetLock.Unlock()
 
 	return resp, nil
 }
-
 
 func (b *Broker) SendHeartbeat() {
 

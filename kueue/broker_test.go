@@ -5,39 +5,67 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"fmt"
 	"kueue/kueue/proto"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"sync"
 	"testing"
+	"time"
 
-	"github.com/puzpuzpuz/xsync"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	proto1 "google.golang.org/protobuf/proto"
 )
 
-// func TestBrokerProduceConsume(t *testing.T) {
+func generateMessages(n int) []*proto.ProducerMessage {
+	msgs := make([]*proto.ProducerMessage, n)
+	for i := 0; i < n; i++ {
+		msgs[i] = &proto.ProducerMessage{
+			Key:   fmt.Sprintf("key:%d", i),
+			Value: fmt.Sprintf("value:%d", i),
+		}
+	}
+	return msgs
+}
 
-// 	b := Broker{
-// 		logger: *logrus.WithField("test", "broker"),
-// 		Data:   xsync.NewMap(),
-// 		BrokerInfo: &BrokerInfo{
-// 			BrokerName: "BK1",
-// PersistBatch: 100,
-// 		},
-// 	}
+func consumerToProducerMessages(msgs []*proto.ConsumerMessage) []*proto.ProducerMessage {
+	newMsgs := make([]*proto.ProducerMessage, len(msgs))
+	for i, msg := range msgs {
+		newMsgs[i] = &proto.ProducerMessage{
+			Key:   msg.Key,
+			Value: msg.Value,
+		}
+	}
+	return newMsgs
+}
 
-// 	msgs := []*proto.ProducerMessage{
-// 		{Key: "key1", Value: "value1"},
-// 		{Key: "key2", Value: "value2"},
-// 		{Key: "key3", Value: "value3"},
-// 		{Key: "key4", Value: "value4"},
-// 		{Key: "key5", Value: "value5"},
-// 	}
+func checkMessageContent(t *testing.T, msgs1 []*proto.ProducerMessage, msgs2 []*proto.ConsumerMessage) {
+	assert.Len(t, msgs1, len(msgs2))
+	msgs3 := consumerToProducerMessages(msgs2)
+	assert.ElementsMatch(t, msgs1, msgs3)
+}
 
+// Check that the consumes messages have correct offsets and monotonic timestamps
+func checkMessageMetadata(t *testing.T, msgs []*proto.ConsumerMessage, baseOffset int) {
+	assert.EqualValues(t, msgs[0].Offset, baseOffset)
+	for i := 1; i < len(msgs); i++ {
+		assert.EqualValues(t, msgs[i].Offset, msgs[i-1].Offset+1)
+		assert.GreaterOrEqual(t, msgs[i].Timestamp, msgs[i-1].Timestamp)
+	}
+}
+
+func TestBrokerProduceConsume(t *testing.T) {
+
+	b := NewMockBroker(*logrus.WithField("test", "broker"))
+
+	msgs := generateMessages(5)
+
+
+	
 // 	produceRequest := proto.ProduceRequest{
 // 		TopicName:   "topic1",
 // 		ProducerId:  "producer1",
@@ -98,6 +126,7 @@ func TestBrokerProducePersist(t *testing.T) {
     assert.EqualValues(t, resp1.BaseOffset, 0)
 
     // Verify that files are created
+
     dirPath := filepath.Join(b.BrokerInfo.BrokerName, "topic1-0")
     files, err := os.ReadDir(dirPath)
     assert.NoError(t, err)
@@ -269,6 +298,51 @@ func TestBrokerConcurrentProduce(t *testing.T) {
 // func TestBroker(t *testing.T) {
 // 	lis := bufconn.Listen(1024 * 1024)
 
+	msgs := generateMessages(1)
+
+	produceRequest := proto.ProduceRequest{
+		TopicName:   "topic1",
+		ProducerId:  "producer1",
+		PartitionId: 0,
+	}
+
+	b.Produce(context.Background(), &produceRequest)
+
+	// Try consuming from an empty partition
+	consumeRequest := proto.ConsumeRequest{
+		TopicName:   "topic1",
+		PartitionId: 0,
+		ConsumerId:  "consumer1",
+	}
+
+	resp, err := b.Consume(context.Background(), &consumeRequest)
+
+	assert.Error(t, err)
+	assert.Nil(t, resp)
+
+	produceRequest.Messages = msgs
+	b.Produce(context.Background(), &produceRequest)
+
+	resp, err = b.Consume(context.Background(), &consumeRequest)
+	assert.NoError(t, err)
+	assert.Equal(t, resp.TopicName, "topic1")
+	checkMessageContent(t, msgs, resp.Records)
+
+	resp, err = b.Consume(context.Background(), &consumeRequest)
+	assert.Equal(t, resp.TopicName, "topic1")
+	assert.Empty(t, resp.Records)
+	assert.NoError(t, err)
+	assert.Equal(t, resp2.TopicName, "topic1")
+	assert.Len(t, resp2.Records, len(msgs))
+	for i := 0; i < len(msgs); i++ {
+		assert.Equal(t, resp2.Records[i].Key, msgs[i].Key)
+		assert.Equal(t, resp2.Records[i].Value, msgs[i].Value)
+	}
+}
+
+// func TestBroker(t *testing.T) {
+// 	lis := bufconn.Listen(1024 * 1024)
+
 // 	s := grpc.NewServer()
 // 	defer s.Stop()
 // 	b := makeBroker(t)
@@ -286,12 +360,73 @@ func TestBrokerConcurrentProduce(t *testing.T) {
 
 // 	assert.NoError(t, err)
 
-// 	client := proto.NewBrokerServiceClient(conn)
+}
 
-// 	// client.ProduceMessage(context.Background(), &proto.ProduceRequest{
-// 	// 	TopicName: "topic1",
-// 	// 	ProducerId: "producer1",
-// 	// 	Message: &proto.Message{
-// 	// })
+func TestBrokerMPSC(t *testing.T) {
+	var (
+		numProducer           = 2
+		numMessagePerProducer = 10
+		numMessagePerRequest  = 5
+	)
+	numBatch := numMessagePerProducer / numMessagePerRequest
+	b := NewMockBroker(*logrus.WithField("test", "broker"))
+	msgs := generateMessages(numProducer * numMessagePerProducer)
 
-// }
+	var wg sync.WaitGroup
+
+	for i := 0; i < numProducer; i++ {
+		go func(i int, msgs []*proto.ProducerMessage) {
+			wg.Add(1)
+			producerId := fmt.Sprintf("producer-%d", i)
+			for batchIdx := 0; batchIdx < numBatch; batchIdx++ {
+				begin := batchIdx * numMessagePerRequest
+				end := begin + numMessagePerRequest
+				produceRequest := proto.ProduceRequest{
+					TopicName:   "topic1",
+					ProducerId:  producerId,
+					PartitionId: 0,
+					Messages:    msgs[begin:end],
+				}
+				_, err := b.Produce(context.Background(), &produceRequest)
+				assert.NoError(t, err)
+			}
+			wg.Done()
+		}(i, msgs[i*numMessagePerProducer:(i+1)*numMessagePerProducer])
+	}
+
+	consumeRequest := proto.ConsumeRequest{
+		TopicName:   "topic1",
+		PartitionId: 0,
+		ConsumerId:  "consumer-1",
+	}
+
+	done := make(chan struct{})
+
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	// Wait a bit for at least one message to be produced
+	time.Sleep(100 * time.Millisecond)
+
+	var resp1 *proto.ConsumeResponse
+	var err error
+	var arr []*proto.ConsumerMessage
+
+	select {
+	case <-done:
+		resp1, err = b.Consume(context.Background(), &consumeRequest)
+		assert.NoError(t, err)
+		arr = append(arr, resp1.Records...)
+		return
+	default:
+		resp1, err = b.Consume(context.Background(), &consumeRequest)
+		assert.NoError(t, err)
+		arr = append(arr, resp1.Records...)
+	}
+
+	checkMessageContent(t, msgs, arr)
+	//fmt.Println(arr)
+	checkMessageMetadata(t, arr, 0)
+}
