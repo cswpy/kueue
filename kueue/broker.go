@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/puzpuzpuz/xsync"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -17,6 +16,7 @@ import (
 
 var (
 	MAX_BATCH_SIZE int = 20
+	MAP_SHARD_SIZE int = 8
 )
 
 type Broker struct {
@@ -26,9 +26,8 @@ type Broker struct {
 	ControllerAddr string
 	client         proto.ControllerServiceClient
 	logger         logrus.Entry
-	data           *xsync.Map       // topic_partition_id -> list of records, save protobuf messages directly for simplicity; uses xsync.Map for concurrent access
-	lock_manager   *xsync.Map       // lock for managing concurrent access to data
-	consumerOffset map[string]int32 // consumer_id_topic_partition_id -> offset
+	data           *ConcurrentMap[string, []*proto.ConsumerMessage] // topic_partition_id -> list of records, save protobuf messages directly for simplicity
+	consumerOffset map[string]int32                                 // consumer_id_topic_partition_id -> offset
 	offsetLock     sync.RWMutex
 }
 
@@ -37,8 +36,7 @@ func NewMockBroker(logger logrus.Entry) *Broker {
 	return &Broker{
 		BrokerInfo:     &BrokerInfo{BrokerName: "mock-broker", NodeAddr: "localhost:50051"},
 		logger:         logger,
-		data:           xsync.NewMap(),
-		lock_manager:   xsync.NewMap(),
+		data:           NewConcurrentMap[string, []*proto.ConsumerMessage](MAP_SHARD_SIZE),
 		consumerOffset: make(map[string]int32),
 	}
 }
@@ -68,8 +66,7 @@ func NewBroker(info *BrokerInfo, controllerAddr string, logger logrus.Entry) (*B
 		ControllerAddr: controllerAddr,
 		client:         client,
 		logger:         logger,
-		data:           xsync.NewMap(),
-		lock_manager:   xsync.NewMap(),
+		data:           NewConcurrentMap[string, []*proto.ConsumerMessage](MAP_SHARD_SIZE),
 		consumerOffset: make(map[string]int32),
 	}, nil
 }
@@ -80,23 +77,26 @@ func (b *Broker) Produce(ctx context.Context, req *proto.ProduceRequest) (*proto
 	partitionID := int(req.PartitionId)
 	topicPartitionID := fmt.Sprintf("%s-%d", req.TopicName, partitionID)
 
-	lockVal, _ := b.lock_manager.LoadAndStore(topicPartitionID, &sync.RWMutex{})
-	lock := lockVal.(*sync.RWMutex)
 	// Wait for lock before loading data
-	lock.Lock()
-	defer lock.Unlock()
-	topicPartition, _ := b.data.LoadOrStore(topicPartitionID, make([]*proto.ConsumerMessage, 0))
-	topicPartitionData := topicPartition.([]*proto.ConsumerMessage)
+	mapShard := b.data.ShardForKey(topicPartitionID)
+	mapShard.Lock()
+	defer mapShard.Unlock()
+
+	var topicPartition []*proto.ConsumerMessage
+	var ok bool
+	if topicPartition, ok = mapShard.Items[topicPartitionID]; !ok {
+		mapShard.Items[topicPartitionID] = make([]*proto.ConsumerMessage, 0)
+	}
 
 	// Getting Offset from the last record in the partition
 	baseOffset := int32(0)
-	topicPartitionLength := len(topicPartitionData)
+	topicPartitionLength := len(topicPartition)
 	if topicPartitionLength > 0 {
-		baseOffset = topicPartitionData[topicPartitionLength-1].Offset + 1
+		baseOffset = topicPartition[topicPartitionLength-1].Offset + 1
 	}
 	nextOffset := baseOffset
 
-	// Append records to partition
+	// Append records to partition, since topicPartition may be reallocated in append, we need to update the map
 	for _, msg := range req.Messages {
 		consumerMsg := &proto.ConsumerMessage{
 			Offset:    nextOffset,
@@ -104,12 +104,11 @@ func (b *Broker) Produce(ctx context.Context, req *proto.ProduceRequest) (*proto
 			Key:       msg.Key,
 			Value:     msg.Value,
 		}
-		fmt.Printf("nextOffset: %d\n", nextOffset)
-		topicPartitionData = append(topicPartitionData, consumerMsg)
+		topicPartition = append(topicPartition, consumerMsg)
 		nextOffset++
 	}
 
-	b.data.Store(topicPartitionID, topicPartitionData)
+	mapShard.Items[topicPartitionID] = topicPartition
 
 	return &proto.ProduceResponse{
 		TopicName:  req.TopicName,
@@ -127,23 +126,23 @@ func (b *Broker) Consume(ctx context.Context, req *proto.ConsumeRequest) (*proto
 	topicPartitionID := fmt.Sprintf("%s-%d", req.TopicName, req.PartitionId)
 
 	// Wait for read lock
-	lockVal, _ := b.lock_manager.LoadAndStore(topicPartitionID, &sync.RWMutex{})
-	lock := lockVal.(*sync.RWMutex)
-	lock.RLock()
-	defer lock.RUnlock()
+	mapShard := b.data.ShardForKey(topicPartitionID)
+	mapShard.RLock()
+	defer mapShard.RUnlock()
 
-	topicPartition, ok := b.data.Load(topicPartitionID)
+	var topicPartition []*proto.ConsumerMessage
+	var ok bool
 
 	// Check if the topic-partition exists in the broker's data
-	if !ok {
+	if topicPartition, ok = mapShard.Items[topicPartitionID]; !ok {
 		err := fmt.Errorf("topic-partition %s not found in broker %v data", topicPartitionID, b.BrokerInfo.BrokerName)
 		b.logger.Fatal(err)
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
 	// Check topic-partition data size
-	topicPartitionData := topicPartition.([]*proto.ConsumerMessage)
-	if len(topicPartitionData) == 0 {
+
+	if len(topicPartition) == 0 {
 		return nil, status.Error(codes.FailedPrecondition, "topic-partition is empty")
 	}
 
@@ -158,14 +157,14 @@ func (b *Broker) Consume(ctx context.Context, req *proto.ConsumeRequest) (*proto
 
 	currMsgOffset := b.consumerOffset[offsetLookupKey]
 
-	baseMsgOffset := topicPartitionData[0].Offset
+	baseMsgOffset := topicPartition[0].Offset
 	beginIndex := int(currMsgOffset - baseMsgOffset)
-	endIndex := min(beginIndex+MAX_BATCH_SIZE, len(topicPartitionData))
+	endIndex := min(beginIndex+MAX_BATCH_SIZE, len(topicPartition))
 
 	numMsgs := endIndex - beginIndex
 	batchMsgs := make([]*proto.ConsumerMessage, numMsgs)
 
-	copy(batchMsgs, topicPartitionData[beginIndex:endIndex])
+	copy(batchMsgs, topicPartition[beginIndex:endIndex])
 	resp := &proto.ConsumeResponse{
 		TopicName: req.TopicName,
 		Records:   batchMsgs,

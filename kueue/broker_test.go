@@ -133,8 +133,8 @@ func TestBrokerMPSC(t *testing.T) {
 	var wg sync.WaitGroup
 
 	for i := 0; i < numProducer; i++ {
+		wg.Add(1)
 		go func(i int, msgs []*proto.ProducerMessage) {
-			wg.Add(1)
 			producerId := fmt.Sprintf("producer-%d", i)
 			for batchIdx := 0; batchIdx < numBatch; batchIdx++ {
 				begin := batchIdx * numMessagePerRequest
@@ -185,6 +185,5 @@ func TestBrokerMPSC(t *testing.T) {
 	}
 
 	checkMessageContent(t, msgs, arr)
-	//fmt.Println(arr)
 	checkMessageMetadata(t, arr, 0)
 }
