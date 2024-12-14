@@ -20,6 +20,21 @@ import (
 	proto1 "google.golang.org/protobuf/proto"
 )
 
+func readOffsetFile(t *testing.T, brokerName, topicName string, partitionId int32, consumerId string) int32 {
+    dirPath := filepath.Join(brokerName, fmt.Sprintf("%s-%d-offset", topicName, partitionId))
+    fileName := fmt.Sprintf("%s.bin", consumerId)
+    filePath := filepath.Join(dirPath, fileName)
+
+    f, err := os.Open(filePath)
+    assert.NoError(t, err, "Should be able to open offset file for consumer %s", consumerId)
+    defer f.Close()
+
+    var storedOffset int32
+    err = binary.Read(f, binary.LittleEndian, &storedOffset)
+    assert.NoError(t, err, "Should read offset for consumer %s", consumerId)
+    return storedOffset
+}
+
 func generateMessages(n int) []*proto.ProducerMessage {
 	msgs := make([]*proto.ProducerMessage, n)
 	for i := 0; i < n; i++ {
@@ -305,6 +320,8 @@ func TestBrokerConcurrentProduce(t *testing.T) {
     //     },
     // }
 
+	
+
 	persistBatch := 2
 	b := NewMockBroker(*logrus.WithField("test", "broker"), persistBatch)
 
@@ -317,6 +334,9 @@ func TestBrokerConcurrentProduce(t *testing.T) {
     numProducers := 2
     iterations := 5
     expectedMessages := numProducers * iterations * len(msgs)
+	defer func() {
+        _ = os.RemoveAll(b.BrokerInfo.BrokerName)
+    }()
 
     var wg sync.WaitGroup
     for i := 0; i < numProducers; i++ {
@@ -405,7 +425,297 @@ func TestBrokerConcurrentProduce(t *testing.T) {
             "File %s expected %d messages but got %d", fileName, expectedCount, count)
     }
 
-    // Optional: Clean up
-    err = os.RemoveAll(b.BrokerInfo.BrokerName)
-    assert.NoError(t, err)
+
 }
+
+
+
+func TestBrokerConsumePersistOffset(t *testing.T) {
+    persistBatch := 2
+    b := NewMockBroker(*logrus.WithField("test", "broker-offset"), persistBatch)
+	defer func() {
+        _ = os.RemoveAll(b.BrokerInfo.BrokerName)
+    }()
+
+    // Produce a few messages
+    msgs := []*proto.ProducerMessage{
+        {Key: "key1", Value: "value1"},
+        {Key: "key2", Value: "value2"},
+        {Key: "key3", Value: "value3"},
+    }
+
+    topicName := "topic1"
+    partitionId := int32(0)
+    consumerId := "consumer1"
+    produceRequest := proto.ProduceRequest{
+        TopicName:   topicName,
+        ProducerId:  "producer1",
+        PartitionId: partitionId,
+        Messages:    msgs,
+    }
+
+    _, err := b.Produce(context.Background(), &produceRequest)
+    assert.NoError(t, err, "Produce should succeed")
+
+    // Consume all messages in one go
+    consumeRequest := proto.ConsumeRequest{
+        TopicName:   topicName,
+        PartitionId: partitionId,
+        ConsumerId:  consumerId,
+    }
+
+    resp, err := b.Consume(context.Background(), &consumeRequest)
+    assert.NoError(t, err, "Consume should succeed")
+    assert.Len(t, resp.Records, len(msgs), "Should return all produced messages")
+
+    // Check if offset is persisted
+    // After consuming all messages, the offset should be equal to len(msgs).
+    expectedOffset := int32(len(msgs))
+
+    // The offset file should be in: brokerName/topicPartitionId-offset/consumerId.bin
+    dirPath := filepath.Join(b.BrokerInfo.BrokerName, fmt.Sprintf("%s-%d-offset", topicName, partitionId))
+    fileName := fmt.Sprintf("%s.bin", consumerId)
+    filePath := filepath.Join(dirPath, fileName)
+
+    // Ensure the file exists
+    _, err = os.Stat(filePath)
+    assert.NoError(t, err, "Offset file should exist after consumption")
+
+    // Read the offset from the file and verify its value
+    f, err := os.Open(filePath)
+    assert.NoError(t, err, "Should be able to open offset file")
+    defer f.Close()
+
+    var storedOffset int32
+    err = binary.Read(f, binary.LittleEndian, &storedOffset)
+    assert.NoError(t, err, "Should be able to read offset from file")
+
+    assert.Equal(t, expectedOffset, storedOffset, "Stored offset should match expected offset")
+
+
+}
+
+
+func TestOffsetPersist_ConsumeAllAtOnce(t *testing.T) {
+    persistBatch := 2
+    b := NewMockBroker(*logrus.WithField("test", "broker-offset-all"), persistBatch)
+    defer func() {
+        _ = os.RemoveAll(b.BrokerInfo.BrokerName)
+    }()
+
+    msgs := []*proto.ProducerMessage{
+        {Key: "key1", Value: "value1"},
+        {Key: "key2", Value: "value2"},
+        {Key: "key3", Value: "value3"},
+    }
+
+    topicName := "topic1"
+    partitionId := int32(0)
+    consumerId := "consumer_all_once"
+
+    produceRequest := proto.ProduceRequest{
+        TopicName:   topicName,
+        ProducerId:  "producer1",
+        PartitionId: partitionId,
+        Messages:    msgs,
+    }
+
+    _, err := b.Produce(context.Background(), &produceRequest)
+    assert.NoError(t, err)
+
+    consumeRequest := proto.ConsumeRequest{
+        TopicName:   topicName,
+        PartitionId: partitionId,
+        ConsumerId:  consumerId,
+    }
+
+    resp, err := b.Consume(context.Background(), &consumeRequest)
+    assert.NoError(t, err)
+    assert.Len(t, resp.Records, len(msgs))
+
+    // Expect offset file to reflect total messages consumed
+    offset := readOffsetFile(t, b.BrokerInfo.BrokerName, topicName, partitionId, consumerId)
+    assert.EqualValues(t, len(msgs), offset, "Offset should match number of consumed messages")
+}
+
+func TestOffsetPersist_MultipleConsumes(t *testing.T) {
+    persistBatch := 2
+    b := NewMockBroker(*logrus.WithField("test", "broker-offset-multi"), persistBatch)
+    defer func() {
+        _ = os.RemoveAll(b.BrokerInfo.BrokerName)
+    }()
+
+    msgs := []*proto.ProducerMessage{
+        {Key: "key1", Value: "value1"},
+        {Key: "key2", Value: "value2"},
+        {Key: "key3", Value: "value3"},
+        {Key: "key4", Value: "value4"},
+        {Key: "key5", Value: "value5"},
+    }
+
+    topicName := "topic1"
+    partitionId := int32(0)
+    consumerId := "consumer_multi"
+
+    produceRequest := proto.ProduceRequest{
+        TopicName:   topicName,
+        ProducerId:  "producer1",
+        PartitionId: partitionId,
+        Messages:    msgs,
+    }
+
+    _, err := b.Produce(context.Background(), &produceRequest)
+    assert.NoError(t, err)
+
+    consumeRequest := proto.ConsumeRequest{
+        TopicName:   topicName,
+        PartitionId: partitionId,
+        ConsumerId:  consumerId,
+    }
+
+    // First consume: should return all messages
+    resp, err := b.Consume(context.Background(), &consumeRequest)
+    assert.NoError(t, err)
+    assert.Len(t, resp.Records, len(msgs))
+
+    offset := readOffsetFile(t, b.BrokerInfo.BrokerName, topicName, partitionId, consumerId)
+    assert.EqualValues(t, len(msgs), offset, "Offset should match total messages consumed")
+
+    // Second consume: no new messages, offset stays the same
+    resp, err = b.Consume(context.Background(), &consumeRequest)
+    assert.NoError(t, err)
+    assert.Len(t, resp.Records, 0)
+
+    offset = readOffsetFile(t, b.BrokerInfo.BrokerName, topicName, partitionId, consumerId)
+    assert.EqualValues(t, len(msgs), offset, "Offset should remain the same after no new messages")
+}
+
+func TestOffsetPersist_MultipleConsumers(t *testing.T) {
+    persistBatch := 2
+    b := NewMockBroker(*logrus.WithField("test", "broker-offset-multiconsumer"), persistBatch)
+    defer func() {
+        _ = os.RemoveAll(b.BrokerInfo.BrokerName)
+    }()
+
+    msgs := []*proto.ProducerMessage{
+        {Key: "key1", Value: "value1"},
+        {Key: "key2", Value: "value2"},
+    }
+
+    topicName := "topic1"
+    partitionId := int32(0)
+    consumerIdA := "consumerA"
+    consumerIdB := "consumerB"
+
+    produceRequest := proto.ProduceRequest{
+        TopicName:   topicName,
+        ProducerId:  "producer1",
+        PartitionId: partitionId,
+        Messages:    msgs,
+    }
+
+    _, err := b.Produce(context.Background(), &produceRequest)
+    assert.NoError(t, err)
+
+    // consumerA consumes all messages
+    resp, err := b.Consume(context.Background(), &proto.ConsumeRequest{
+        TopicName:   topicName,
+        PartitionId: partitionId,
+        ConsumerId:  consumerIdA,
+    })
+    assert.NoError(t, err)
+    assert.Len(t, resp.Records, len(msgs))
+    offsetA := readOffsetFile(t, b.BrokerInfo.BrokerName, topicName, partitionId, consumerIdA)
+    assert.EqualValues(t, len(msgs), offsetA)
+
+    // consumerB is a new consumer, also gets all messages from start
+    resp, err = b.Consume(context.Background(), &proto.ConsumeRequest{
+        TopicName:   topicName,
+        PartitionId: partitionId,
+        ConsumerId:  consumerIdB,
+    })
+    assert.NoError(t, err)
+    assert.Len(t, resp.Records, len(msgs))
+    offsetB := readOffsetFile(t, b.BrokerInfo.BrokerName, topicName, partitionId, consumerIdB)
+    assert.EqualValues(t, len(msgs), offsetB)
+
+    // Check that each consumer's offset file is independent
+}
+
+
+func TestOffsetPersist_ConcurrentConsume(t *testing.T) {
+    persistBatch := 2
+    b := NewMockBroker(*logrus.WithField("test", "broker-offset-concurrent"), persistBatch)
+    defer func() {
+        _ = os.RemoveAll(b.BrokerInfo.BrokerName)
+    }()
+
+    // Produce messages
+    totalMessages := 20
+    msgs := make([]*proto.ProducerMessage, totalMessages)
+    for i := 0; i < totalMessages; i++ {
+        msgs[i] = &proto.ProducerMessage{Key: fmt.Sprintf("key%d", i), Value: fmt.Sprintf("value%d", i)}
+    }
+
+    topicName := "topic1"
+    partitionId := int32(0)
+
+    produceRequest := proto.ProduceRequest{
+        TopicName:   topicName,
+        ProducerId:  "producer1",
+        PartitionId: partitionId,
+        Messages:    msgs,
+    }
+
+    _, err := b.Produce(context.Background(), &produceRequest)
+    assert.NoError(t, err, "Produce should succeed")
+
+    // Number of concurrent consumers
+    numConsumers := 5
+
+    // Each consumer will read until no more messages are available
+    consumeUntilDone := func(consumerId string) {
+        consumeReq := proto.ConsumeRequest{
+            TopicName:   topicName,
+            PartitionId: partitionId,
+            ConsumerId:  consumerId,
+        }
+
+        for {
+            resp, err := b.Consume(context.Background(), &consumeReq)
+            assert.NoError(t, err, "Consume should not fail for consumer %s", consumerId)
+
+            // If no records returned, we've reached the end for this consumer
+            if len(resp.Records) == 0 {
+                break
+            }
+
+            // Just keep consuming until empty
+        }
+
+        // At the end, the offset file should be created and have offset == totalMessages
+        offset := readOffsetFile(t, b.BrokerInfo.BrokerName, topicName, partitionId, consumerId)
+        assert.EqualValues(t, totalMessages, offset, "Consumer %s offset should match total messages", consumerId)
+    }
+
+    var wg sync.WaitGroup
+    wg.Add(numConsumers)
+
+    // Start multiple consumers concurrently
+    for i := 0; i < numConsumers; i++ {
+        consumerId := fmt.Sprintf("consumer%d", i)
+        go func(cid string) {
+            defer wg.Done()
+            consumeUntilDone(cid)
+        }(consumerId)
+    }
+
+    wg.Wait()
+
+    // By now all consumers should have reached the end
+    // Each consumer's offset file should have been correctly persisted
+    // The assertions inside the consumeUntilDone function check correctness.
+}
+
+
+

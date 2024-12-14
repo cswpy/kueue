@@ -82,7 +82,6 @@ func NewBroker(info *BrokerInfo, controllerAddr string, logger logrus.Entry) (*B
 		BrokerInfo:     info,
 		ControllerAddr: controllerAddr,
 		client:         client,
-		Data: 		 	xsync.NewMap(), // Initialize the xsync.Map
 		logger:         logger,
 		data:           NewConcurrentMap[string, []*proto.ConsumerMessage](MAP_SHARD_SIZE),
 		consumerOffset: make(map[string]int32),
@@ -159,7 +158,7 @@ func (b *Broker) persistData(topicPartitionId string, msg *proto.ConsumerMessage
     fileName := fmt.Sprintf("%010d.bin", fileIndex)
     filePath := filepath.Join(dirPath, fileName)
 
-    b.logger.Printf("Writing to file: %s, Offset: %d, Length: %d", filePath, msg.Offset, len(dataBytes))
+    // b.logger.Printf("Writing to file: %s, Offset: %d, Length: %d", filePath, msg.Offset, len(dataBytes))
 
     file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
     if err != nil {
@@ -183,167 +182,10 @@ func (b *Broker) persistData(topicPartitionId string, msg *proto.ConsumerMessage
         return
     }
 
-    b.logger.Printf("Successfully persisted message with Offset: %d to file: %s", msg.Offset, filePath)
+    // b.logger.Printf("Successfully persisted message with Offset: %d to file: %s", msg.Offset, filePath)
 }
 
 
-
-// func (b *Broker) persistData(topicPartitionId string, msg *proto.ConsumerMessage) {
-// 	b.messageCountMu.Lock()
-//     defer b.messageCountMu.Unlock()
-
-//     dirPath := filepath.Join(b.BrokerInfo.BrokerName, topicPartitionId)
-//     err := os.MkdirAll(dirPath, 0755)
-//     if err != nil {
-//         b.logger.Fatalf("Failed to create directory: %v", err)
-//         return
-//     }
-
-	
-//     // Serialize the message
-//     dataBytes, err := proto1.Marshal(msg)
-//     if err != nil {
-//         b.logger.Printf("Failed to marshal message: %v", err)
-//         return
-//     }
-
-
-//     // messageCount := b.MessageCount[topicPartitionId]
-// 	messageCount := msg.Offset
-//     fileIndex := (int(messageCount) / b.BrokerInfo.PersistBatch) * b.BrokerInfo.PersistBatch
-//     fileName := fmt.Sprintf("%010d.bin", fileIndex)
-// 	filePath := filepath.Join(dirPath, fileName)
-
-
-
-// 	// Open the file in append mode
-// 	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-// 	if err != nil {
-// 		b.logger.Printf("Failed to open file %s: %v", filePath, err)
-// 		return
-// 	}
-// 	defer file.Close()
-
-// 	length := uint32(len(dataBytes))
-//     if err := binary.Write(file, binary.LittleEndian, length); err != nil {
-//         b.logger.Printf("Failed to write message length to file %s: %v", filePath, err)
-//         return
-//     }
-//     if _, err := file.Write(dataBytes); err != nil {
-//         b.logger.Printf("Failed to write message to file %s: %v", filePath, err)
-//         return
-//     }
-
-// 	// Ensure data is flushed to disk
-//     if err := file.Sync(); err != nil {
-//         b.logger.Printf("Failed to sync file %s: %v", filePath, err)
-//         return
-//     }
-
-// 	// b.MessageCount[topicPartitionId]++
-// }
-
-
-// func (b *Broker) persistConsumerOffset(topicPartitionId string) {
-//     dirPath := b.BrokerInfo.BrokerName+"/"+topicPartitionId
-//     err := os.MkdirAll(dirPath, 0755)
-//     if err != nil {
-//         b.logger.Fatalf("Failed to create directory: %v", err)
-//         return
-//     }
-
-// 	fileName := fmt.Sprintf("%s-offset.bin", topicPartitionId)
-//     filePath := filepath.Join(dirPath, fileName)
-
-//     file, err := os.Create(filePath)
-//     if err != nil {
-//         b.logger.Fatalf("Failed to create file: %v", err)
-//         return
-//     }
-//     defer file.Close()
-
-//     encoder := gob.NewEncoder(file)
-//     err = encoder.Encode(b.ConsumerOffset)
-//     if err != nil {
-//         b.logger.Printf("Failed to encode consumer offsets: %v", err)
-//     }
-// }
-
-
-
-// func (b *Broker) persistData(topicPartitionId string, msg *proto.ConsumerMessage) {
-// 	// b.messageCountMu.Lock()
-//     // defer b.messageCountMu.Unlock()
-
-//     dirPath := filepath.Join(b.BrokerInfo.BrokerName, topicPartitionId)
-//     err := os.MkdirAll(dirPath, 0755)
-//     if err != nil {
-//         b.logger.Fatalf("Failed to create directory: %v", err)
-//         return
-//     }
-
-	
-//     // Serialize the message
-//     dataBytes, err := proto1.Marshal(msg)
-//     if err != nil {
-//         b.logger.Printf("Failed to marshal message: %v", err)
-//         return
-//     }
-
-
-//     // messageCount := b.MessageCount[topicPartitionId]
-// 	messageCount := msg.Offset
-//     fileIndex := (int(messageCount) / b.BrokerInfo.PersistBatch) * b.BrokerInfo.PersistBatch
-//     fileName := fmt.Sprintf("%010d.bin", fileIndex)
-// 	filePath := filepath.Join(dirPath, fileName)
-
-
-
-// 	// Open the file in append mode
-// 	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-// 	if err != nil {
-// 		b.logger.Printf("Failed to open file %s: %v", filePath, err)
-// 		return
-// 	}
-// 	defer file.Close()
-
-// 	_, err = file.Write(dataBytes)
-// 	if err != nil {
-// 		b.logger.Printf("Failed to write to file %s: %v", filePath, err)
-// 		return
-// 	}
-
-// 	// b.MessageCount[topicPartitionId]++
-
-
-    
-// }
-
-
-// func (b *Broker) persistConsumerOffset(topicPartitionId string) {
-//     dirPath := b.BrokerInfo.BrokerName+"/"+topicPartitionId
-//     err := os.MkdirAll(dirPath, 0755)
-//     if err != nil {
-//         b.logger.Fatalf("Failed to create directory: %v", err)
-//         return
-//     }
-
-// 	fileName := fmt.Sprintf("%s-offset.bin", topicPartitionId)
-//     filePath := filepath.Join(dirPath, fileName)
-
-//     file, err := os.Create(filePath)
-//     if err != nil {
-//         b.logger.Fatalf("Failed to create file: %v", err)
-//         return
-//     }
-//     defer file.Close()
-
-//     encoder := gob.NewEncoder(file)
-//     err = encoder.Encode(b.ConsumerOffset)
-//     if err != nil {
-//         b.logger.Printf("Failed to encode consumer offsets: %v", err)
-//     }
-// }
 
 
 // TODO: handle the case where new consumers start consuming from the beginning of the topic-partition, which is not in main memory but on disk
@@ -400,10 +242,52 @@ func (b *Broker) Consume(ctx context.Context, req *proto.ConsumeRequest) (*proto
 		Records:   batchMsgs,
 	}
 
-	b.consumerOffset[offsetLookupKey] = int32(endIndex)
+	newOffset := int32(endIndex)
+	b.consumerOffset[offsetLookupKey] = newOffset
+	// Persist the updated offset
+    b.persistConsumerOffset(topicPartitionID, req.ConsumerId, newOffset)
 
 	return resp, nil
 }
+
+func (b *Broker) persistConsumerOffset(topicPartitionId, consumerId string, offset int32) {
+    b.messageCountMu.Lock()
+    defer b.messageCountMu.Unlock()
+
+    // Directory for offsets
+    dirPath := filepath.Join(b.BrokerInfo.BrokerName, topicPartitionId+"-offset")
+    err := os.MkdirAll(dirPath, 0755)
+    if err != nil {
+        b.logger.Fatalf("Failed to create directory: %v", err)
+        return
+    }
+
+    fileName := fmt.Sprintf("%s.bin", consumerId)
+    filePath := filepath.Join(dirPath, fileName)
+
+    // b.logger.Printf("Persisting offset %d for consumer %s in %s", offset, consumerId, filePath)
+
+    file, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+    if err != nil {
+        b.logger.Printf("Failed to open file %s for offset persistence: %v", filePath, err)
+        return
+    }
+    defer file.Close()
+
+    // Write the offset as binary (int32)
+    if err := binary.Write(file, binary.LittleEndian, offset); err != nil {
+        b.logger.Printf("Failed to write offset to file %s: %v", filePath, err)
+        return
+    }
+
+    if err := file.Sync(); err != nil {
+        b.logger.Printf("Failed to sync offset file %s: %v", filePath, err)
+        return
+    }
+
+    // b.logger.Printf("Successfully persisted offset %d for consumer %s to file: %s", offset, consumerId, filePath)
+}
+
 
 func (b *Broker) SendHeartbeat() {
 
