@@ -38,14 +38,15 @@ type Broker struct {
 	lock_manager   *xsync.Map       // lock for managing concurrent access to data
 	consumerOffset map[string]int32 // consumer_id_topic_partition_id -> offset
 	offsetLock     sync.RWMutex
+	messageCountMu sync.Mutex
 }
 
 // NewMockBroker creates a new broker with an in-memory data store, incapable of communicating with gRPC services
-func NewMockBroker(logger logrus.Entry) *Broker {
+func NewMockBroker(logger logrus.Entry, persistBatch int) *Broker {
 	return &Broker{
-		BrokerInfo:     &BrokerInfo{BrokerName: "mock-broker", NodeAddr: "localhost:50051"},
+		BrokerInfo:     &BrokerInfo{BrokerName: "mock-broker", NodeAddr: "localhost:50051", PersistBatch: persistBatch},
 		logger:         logger,
-		data:           xsync.NewMap(),
+		Data:           xsync.NewMap(),
 		lock_manager:   xsync.NewMap(),
 		consumerOffset: make(map[string]int32),
 	}
@@ -85,7 +86,6 @@ func NewBroker(info *BrokerInfo, controllerAddr string, logger logrus.Entry) (*B
 		client:         client,
 		Data: 		 	xsync.NewMap(), // Initialize the xsync.Map
 		logger:         logger,
-		data:           xsync.NewMap(),
 		lock_manager:   xsync.NewMap(),
 		consumerOffset: make(map[string]int32),
 	}, nil
@@ -102,7 +102,7 @@ func (b *Broker) Produce(ctx context.Context, req *proto.ProduceRequest) (*proto
 	// Wait for lock before loading data
 	lock.Lock()
 	defer lock.Unlock()
-	topicPartition, _ := b.data.LoadOrStore(topicPartitionID, make([]*proto.ConsumerMessage, 0))
+	topicPartition, _ := b.Data.LoadOrStore(topicPartitionID, make([]*proto.ConsumerMessage, 0))
 	topicPartitionData := topicPartition.([]*proto.ConsumerMessage)
 
 	// Getting Offset from the last record in the partition
@@ -363,7 +363,7 @@ func (b *Broker) Consume(ctx context.Context, req *proto.ConsumeRequest) (*proto
 	lock.RLock()
 	defer lock.RUnlock()
 
-	topicPartition, ok := b.data.Load(topicPartitionID)
+	topicPartition, ok := b.Data.Load(topicPartitionID)
 
 	// Check if the topic-partition exists in the broker's data
 	if !ok {
