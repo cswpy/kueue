@@ -2,17 +2,20 @@ package kueue
 
 import (
 	"context"
+	"time"
+
 	"encoding/binary"
 	"fmt"
 	"io"
 	"kueue/kueue/proto"
 	"os"
+
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
-	"time"
+	// "time"
 
 	// "github.com/puzpuzpuz/xsync"
 	"github.com/sirupsen/logrus"
@@ -26,6 +29,10 @@ func readOffsetFile(t *testing.T, brokerName, topicName string, partitionId int3
     filePath := filepath.Join(dirPath, fileName)
 
     f, err := os.Open(filePath)
+    if os.IsNotExist(err) {
+        // If the file does not exist, return 0 as the default offset
+        return 0
+    }
     assert.NoError(t, err, "Should be able to open offset file for consumer %s", consumerId)
     defer f.Close()
 
@@ -74,7 +81,8 @@ func checkMessageMetadata(t *testing.T, msgs []*proto.ConsumerMessage, baseOffse
 
 func TestBrokerProduceConsume(t *testing.T) {
 	persistBatch := 2
-	b := NewMockBroker(*logrus.WithField("test", "broker"), persistBatch)
+	brokerName := "BK1"
+	b := NewMockBroker(*logrus.WithField("test", "broker"), brokerName, persistBatch)
 
 	msgs := generateMessages(5)
 
@@ -109,7 +117,8 @@ func TestBrokerProduceConsume(t *testing.T) {
 
 func TestBrokerConsumeEmptyPartition(t *testing.T) {
 	persistBatch := 2
-	b := NewMockBroker(*logrus.WithField("test", "broker"), persistBatch)
+    brokerName := "BK1"
+	b := NewMockBroker(*logrus.WithField("test", "broker"), brokerName, persistBatch)
 
 	msgs := generateMessages(1)
 
@@ -160,7 +169,8 @@ func TestBrokerMPSC(t *testing.T) {
 		persistBatch		  = 2
 	)
 	numBatch := numMessagePerProducer / numMessagePerRequest
-	b := NewMockBroker(*logrus.WithField("test", "broker"), persistBatch)
+	brokerName := "BK1"
+	b := NewMockBroker(*logrus.WithField("test", "broker"), brokerName, persistBatch)
 	msgs := generateMessages(numProducer * numMessagePerProducer)
 
 	var wg sync.WaitGroup
@@ -239,7 +249,8 @@ func TestBrokerProducePersist(t *testing.T) {
     //     },
     // }
 	persistBatch := 2
-	b := NewMockBroker(*logrus.WithField("test", "broker"), persistBatch)
+	brokerName := "BK1"
+	b := NewMockBroker(*logrus.WithField("test", "broker"), brokerName, persistBatch)
 
     msgs := []*proto.ProducerMessage{
         {Key: "key1", Value: "value1"},
@@ -323,7 +334,8 @@ func TestBrokerConcurrentProduce(t *testing.T) {
 	
 
 	persistBatch := 2
-	b := NewMockBroker(*logrus.WithField("test", "broker"), persistBatch)
+	brokerName := "BK1"
+	b := NewMockBroker(*logrus.WithField("test", "broker"), brokerName, persistBatch)
 
     msgs := []*proto.ProducerMessage{
         {Key: "key1", Value: "value1"},
@@ -432,7 +444,8 @@ func TestBrokerConcurrentProduce(t *testing.T) {
 
 func TestBrokerConsumePersistOffset(t *testing.T) {
     persistBatch := 2
-    b := NewMockBroker(*logrus.WithField("test", "broker-offset"), persistBatch)
+    brokerName := "BK1"
+	b := NewMockBroker(*logrus.WithField("test", "broker"), brokerName, persistBatch)
 	defer func() {
         _ = os.RemoveAll(b.BrokerInfo.BrokerName)
     }()
@@ -498,7 +511,8 @@ func TestBrokerConsumePersistOffset(t *testing.T) {
 
 func TestOffsetPersist_ConsumeAllAtOnce(t *testing.T) {
     persistBatch := 2
-    b := NewMockBroker(*logrus.WithField("test", "broker-offset-all"), persistBatch)
+    brokerName := "BK1"
+	b := NewMockBroker(*logrus.WithField("test", "broker"), brokerName, persistBatch)
     defer func() {
         _ = os.RemoveAll(b.BrokerInfo.BrokerName)
     }()
@@ -540,7 +554,8 @@ func TestOffsetPersist_ConsumeAllAtOnce(t *testing.T) {
 
 func TestOffsetPersist_MultipleConsumes(t *testing.T) {
     persistBatch := 2
-    b := NewMockBroker(*logrus.WithField("test", "broker-offset-multi"), persistBatch)
+    brokerName := "BK1"
+	b := NewMockBroker(*logrus.WithField("test", "broker"), brokerName, persistBatch)
     defer func() {
         _ = os.RemoveAll(b.BrokerInfo.BrokerName)
     }()
@@ -592,7 +607,8 @@ func TestOffsetPersist_MultipleConsumes(t *testing.T) {
 
 func TestOffsetPersist_MultipleConsumers(t *testing.T) {
     persistBatch := 2
-    b := NewMockBroker(*logrus.WithField("test", "broker-offset-multiconsumer"), persistBatch)
+    brokerName := "BK1"
+	b := NewMockBroker(*logrus.WithField("test", "broker"), brokerName, persistBatch)
     defer func() {
         _ = os.RemoveAll(b.BrokerInfo.BrokerName)
     }()
@@ -645,7 +661,8 @@ func TestOffsetPersist_MultipleConsumers(t *testing.T) {
 
 func TestOffsetPersist_ConcurrentConsume(t *testing.T) {
     persistBatch := 2
-    b := NewMockBroker(*logrus.WithField("test", "broker-offset-concurrent"), persistBatch)
+    brokerName := "BK1"
+	b := NewMockBroker(*logrus.WithField("test", "broker"), brokerName, persistBatch)
     defer func() {
         _ = os.RemoveAll(b.BrokerInfo.BrokerName)
     }()
@@ -719,3 +736,237 @@ func TestOffsetPersist_ConcurrentConsume(t *testing.T) {
 
 
 
+
+
+func TestBrokerRecovery(t *testing.T) {
+    persistBatch := 2
+    brokerName := "broker_recovery_test"
+
+    // Create a new broker instance with the specified brokerName
+    b := NewMockBroker(*logrus.WithField("test", brokerName), brokerName, persistBatch)
+
+    defer func() {
+        _ = os.RemoveAll(brokerName)
+    }()
+
+    // Produce messages to the broker
+    msgs := []*proto.ProducerMessage{
+        {Key: "key1", Value: "value1"},
+        {Key: "key2", Value: "value2"},
+        {Key: "key3", Value: "value3"},
+    }
+
+    topicName := "topic1"
+    partitionId := int32(0)
+    consumerId := "consumer1"
+
+    produceRequest := proto.ProduceRequest{
+        TopicName:   topicName,
+        ProducerId:  "producer1",
+        PartitionId: partitionId,
+        Messages:    msgs,
+    }
+
+    _, err := b.Produce(context.Background(), &produceRequest)
+    assert.NoError(t, err)
+
+    // Simulate broker shutdown by setting b to nil
+    b = nil
+
+    // Re-instantiate the broker to simulate a restart
+    b2 := NewMockBroker(*logrus.WithField("test", brokerName), brokerName, persistBatch)
+
+    // Consume messages from the restarted broker
+    consumeRequest := proto.ConsumeRequest{
+        TopicName:   topicName,
+        PartitionId: partitionId,
+        ConsumerId:  consumerId,
+    }
+
+    resp, err := b2.Consume(context.Background(), &consumeRequest)
+    assert.NoError(t, err)
+    assert.Len(t, resp.Records, len(msgs))
+
+    // Verify that the consumed messages match the produced messages
+    for i, msg := range resp.Records {
+        assert.Equal(t, msgs[i].Key, msg.GetKey())
+        assert.Equal(t, msgs[i].Value, msg.GetValue())
+    }
+}
+
+
+
+func TestBrokerInitialization_LoadPersistedMessages(t *testing.T) {
+    persistBatch := 2
+    brokerName := "broker_initialization_test"
+
+    // Step 1: Create a new broker instance and produce messages
+    b := NewMockBroker(*logrus.WithField("test", brokerName), brokerName, persistBatch)
+    defer func() {
+        _ = os.RemoveAll(brokerName)
+    }()
+
+    msgs := []*proto.ProducerMessage{
+        {Key: "key1", Value: "value1"},
+        {Key: "key2", Value: "value2"},
+        {Key: "key3", Value: "value3"},
+        {Key: "key4", Value: "value4"},
+    }
+
+    topicName := "test_topic"
+    partitionId := int32(0)
+    produceRequest := proto.ProduceRequest{
+        TopicName:   topicName,
+        ProducerId:  "producer1",
+        PartitionId: partitionId,
+        Messages:    msgs,
+    }
+
+    _, err := b.Produce(context.Background(), &produceRequest)
+    assert.NoError(t, err)
+
+    // Step 2: Verify messages are persisted correctly
+    // (Optional) You can check the files on disk if needed
+    // For this test, we'll proceed to simulate a broker restart
+
+    // Step 3: Simulate broker shutdown
+    b = nil
+
+    // Step 4: Re-instantiate the broker to simulate a restart
+    b2 := NewMockBroker(*logrus.WithField("test", brokerName), brokerName, persistBatch)
+
+    // Step 5: Verify that the broker loaded the correct number of messages
+    topicPartitionID := fmt.Sprintf("%s-%d", topicName, partitionId)
+    mapShard := b2.data.ShardForKey(topicPartitionID)
+    mapShard.RLock()
+    loadedMessages, ok := mapShard.Items[topicPartitionID]
+    mapShard.RUnlock()
+
+    assert.True(t, ok, "Partition data should be loaded")
+    assert.Equal(t, len(msgs), len(loadedMessages), "Loaded message count should match produced message count")
+
+    // Step 6: Optionally, log the loaded messages for verification
+    for i, msg := range loadedMessages {
+        b2.logger.Printf("Loaded message %d: Offset=%d, Key=%s, Value=%s", i, msg.GetOffset(), msg.GetKey(), msg.GetValue())
+    }
+}
+
+
+func TestBrokerInitialization_NoMessagesConsumed(t *testing.T) {
+    persistBatch := 2
+    brokerName := "broker_no_messages_consumed_test"
+
+    // Step 1: Create a new broker instance and produce messages
+    b := NewMockBroker(*logrus.WithField("test", brokerName), brokerName, persistBatch)
+    defer func() {
+        _ = os.RemoveAll(brokerName)
+    }()
+
+    msgs := []*proto.ProducerMessage{
+        {Key: "key1", Value: "value1"},
+        {Key: "key2", Value: "value2"},
+        {Key: "key3", Value: "value3"},
+        {Key: "key4", Value: "value4"},
+    }
+
+    topicName := "test_topic"
+    partitionId := int32(0)
+    consumerId := "consumer1"
+
+    produceRequest := proto.ProduceRequest{
+        TopicName:   topicName,
+        ProducerId:  "producer1",
+        PartitionId: partitionId,
+        Messages:    msgs,
+    }
+
+    _, err := b.Produce(context.Background(), &produceRequest)
+    assert.NoError(t, err)
+
+    // Step 2: Simulate broker shutdown
+    b = nil
+
+    // Step 3: Re-instantiate the broker to simulate a restart
+    b2 := NewMockBroker(*logrus.WithField("test", brokerName), brokerName, persistBatch)
+    b2.logger.Printf("Broker %s initialized", brokerName)
+
+    // Step 4: Verify that the consumer offset is 0
+    offset := readOffsetFile(t, brokerName, topicName, partitionId, consumerId)
+    assert.EqualValues(t, 0, offset, "Offset should be 0 when no messages are consumed")
+}
+
+
+
+func TestBrokerInitialization_AllMessagesConsumed(t *testing.T) {
+    persistBatch := 2
+    brokerName := "broker_all_messages_consumed_test"
+
+    // Step 1: Create a new broker instance and produce messages
+    b := NewMockBroker(*logrus.WithField("test", brokerName), brokerName, persistBatch)
+    defer func() {
+        _ = os.RemoveAll(brokerName)
+    }()
+
+    msgs := []*proto.ProducerMessage{
+        {Key: "key1", Value: "value1"},
+        {Key: "key2", Value: "value2"},
+        {Key: "key3", Value: "value3"},
+        {Key: "key4", Value: "value4"},
+    }
+
+    topicName := "test_topic"
+    partitionId := int32(0)
+    consumerId := "consumer1"
+
+    produceRequest := proto.ProduceRequest{
+        TopicName:   topicName,
+        ProducerId:  "producer1",
+        PartitionId: partitionId,
+        Messages:    msgs,
+    }
+
+    _, err := b.Produce(context.Background(), &produceRequest)
+    assert.NoError(t, err)
+
+    // Step 2: Consume all messages
+    consumeRequest := proto.ConsumeRequest{
+        TopicName:   topicName,
+        PartitionId: partitionId,
+        ConsumerId:  consumerId,
+    }
+
+    resp, err := b.Consume(context.Background(), &consumeRequest)
+    assert.NoError(t, err)
+    assert.Len(t, resp.Records, len(msgs), "Should consume all messages")
+
+    // Verify that the consumed messages match the produced messages
+    for i, msg := range resp.Records {
+        assert.Equal(t, msgs[i].Key, msg.GetKey(), "Message key should match")
+        assert.Equal(t, msgs[i].Value, msg.GetValue(), "Message value should match")
+    }
+
+    // Verify that the consumer offset is updated to the number of messages
+    offsetBeforeShutdown := readOffsetFile(t, brokerName, topicName, partitionId, consumerId)
+    assert.EqualValues(t, len(msgs), offsetBeforeShutdown, "Offset should equal total number of messages after consuming all")
+
+    // Step 3: Simulate broker shutdown
+    b = nil
+
+    // Step 4: Re-instantiate the broker to simulate a restart
+    b2 := NewMockBroker(*logrus.WithField("test", brokerName), brokerName, persistBatch)
+
+    // Step 5: Verify that the consumer offset is loaded correctly
+    offsetAfterRestart := readOffsetFile(t, brokerName, topicName, partitionId, consumerId)
+    assert.EqualValues(t, len(msgs), offsetAfterRestart, "Offset should be the same after restart")
+    println("Offset after restart:", offsetAfterRestart)
+    println("Offset returned from broker:", b2.GetConsumerOffset(consumerId, topicName, partitionId))
+
+    // Step 6: Attempt to consume again; should get no new messages
+    resp, err = b2.Consume(context.Background(), &consumeRequest)
+    assert.NoError(t, err)
+    assert.Len(t, resp.Records, 0, "No new messages should be available")
+
+    // Offset should remain the same
+    finalOffset := readOffsetFile(t, brokerName, topicName, partitionId, consumerId)
+    assert.EqualValues(t, len(msgs), finalOffset, "Final offset should still be the same after consuming all messages")
+}

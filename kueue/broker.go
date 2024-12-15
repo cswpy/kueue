@@ -2,13 +2,18 @@ package kueue
 
 import (
 	"context"
-	"encoding/binary"
+	// "encoding/binary"
+	// "io"
+	// "io/fs"
+	// "sort"
+	// "strings"
+
 	// "encoding/gob"
 	"fmt"
 	"kueue/kueue/proto"
 	"log"
 	"os"
-	"path/filepath"
+	// "path/filepath"
 	"sync"
 	"time"
 
@@ -19,7 +24,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
-	proto1 "google.golang.org/protobuf/proto"
+	// proto1 "google.golang.org/protobuf/proto"
 )
 
 var (
@@ -40,14 +45,39 @@ type Broker struct {
 	messageCountMu sync.Mutex
 }
 
+func (b *Broker) GetConsumerOffset(consumerID string, topicName string, partitionID int32) int32 {
+    topicPartitionID := fmt.Sprintf("%s-%d", topicName, partitionID)
+    offsetLookupKey := fmt.Sprintf("%s-%s", consumerID, topicPartitionID)
+    b.offsetLock.RLock()
+    defer b.offsetLock.RUnlock()
+    return b.consumerOffset[offsetLookupKey]
+}
+
 // NewMockBroker creates a new broker with an in-memory data store, incapable of communicating with gRPC services
-func NewMockBroker(logger logrus.Entry, persistBatch int) *Broker {
-	return &Broker{
-		BrokerInfo:     &BrokerInfo{BrokerName: "mock-broker", NodeAddr: "localhost:50051", PersistBatch: persistBatch},
-		logger:         logger,
-		data:           NewConcurrentMap[string, []*proto.ConsumerMessage](MAP_SHARD_SIZE),
-		consumerOffset: make(map[string]int32),
-	}
+func NewMockBroker(logger logrus.Entry, brokerName string, persistBatch int) *Broker {
+    brokerInfo := &BrokerInfo{
+        BrokerName:   brokerName, // Use the provided brokerName
+        NodeAddr:     "localhost:50051",
+        PersistBatch: persistBatch,
+    }
+
+    broker := &Broker{
+        BrokerInfo:     brokerInfo,
+        logger:         logger,
+        data:           NewConcurrentMap[string, []*proto.ConsumerMessage](MAP_SHARD_SIZE),
+        consumerOffset: make(map[string]int32),
+    }
+
+    // Load persisted messages and offsets
+    if err := broker.loadPersistedData(); err != nil {
+        broker.logger.Printf("Failed to load persisted data: %v", err)
+    }
+
+    if err := broker.loadConsumerOffsets(); err != nil {
+        broker.logger.Printf("Failed to load consumer offsets: %v", err)
+    }
+
+    return broker
 }
 
 func NewBroker(info *BrokerInfo, controllerAddr string, logger logrus.Entry) (*Broker, error) {
@@ -78,14 +108,27 @@ func NewBroker(info *BrokerInfo, controllerAddr string, logger logrus.Entry) (*B
         return nil, err
     }
 
-	return &Broker{
+	broker := &Broker{
 		BrokerInfo:     info,
 		ControllerAddr: controllerAddr,
 		client:         client,
 		logger:         logger,
 		data:           NewConcurrentMap[string, []*proto.ConsumerMessage](MAP_SHARD_SIZE),
 		consumerOffset: make(map[string]int32),
-	}, nil
+	}
+
+	// Load persisted messages and offsets
+    if err := broker.loadPersistedData(); err != nil {
+        broker.logger.Printf("Failed to load persisted data: %v", err)
+        return nil, err
+    }
+
+    if err := broker.loadConsumerOffsets(); err != nil {
+        broker.logger.Printf("Failed to load consumer offsets: %v", err)
+        return nil, err
+    }
+
+	return broker,nil
 }
 
 func (b *Broker) Produce(ctx context.Context, req *proto.ProduceRequest) (*proto.ProduceResponse, error) {
@@ -134,57 +177,6 @@ func (b *Broker) Produce(ctx context.Context, req *proto.ProduceRequest) (*proto
 		BaseOffset: baseOffset,
 	}, nil
 }
-
-func (b *Broker) persistData(topicPartitionId string, msg *proto.ConsumerMessage) {
-    b.messageCountMu.Lock()
-    defer b.messageCountMu.Unlock()
-
-    dirPath := filepath.Join(b.BrokerInfo.BrokerName, topicPartitionId)
-    err := os.MkdirAll(dirPath, 0755)
-    if err != nil {
-        b.logger.Fatalf("Failed to create directory: %v", err)
-        return
-    }
-
-    // Serialize the message
-    dataBytes, err := proto1.Marshal(msg)
-    if err != nil {
-        b.logger.Printf("Failed to marshal message: %v", err)
-        return
-    }
-
-    messageCount := msg.Offset
-    fileIndex := (int(messageCount) / b.BrokerInfo.PersistBatch) * b.BrokerInfo.PersistBatch
-    fileName := fmt.Sprintf("%010d.bin", fileIndex)
-    filePath := filepath.Join(dirPath, fileName)
-
-    // b.logger.Printf("Writing to file: %s, Offset: %d, Length: %d", filePath, msg.Offset, len(dataBytes))
-
-    file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-    if err != nil {
-        b.logger.Printf("Failed to open file %s: %v", filePath, err)
-        return
-    }
-    defer file.Close()
-
-    length := uint32(len(dataBytes))
-    if err := binary.Write(file, binary.LittleEndian, length); err != nil {
-        b.logger.Printf("Failed to write message length to file %s: %v", filePath, err)
-        return
-    }
-    if _, err := file.Write(dataBytes); err != nil {
-        b.logger.Printf("Failed to write message to file %s: %v", filePath, err)
-        return
-    }
-
-    if err := file.Sync(); err != nil {
-        b.logger.Printf("Failed to sync file %s: %v", filePath, err)
-        return
-    }
-
-    // b.logger.Printf("Successfully persisted message with Offset: %d to file: %s", msg.Offset, filePath)
-}
-
 
 
 
@@ -248,44 +240,6 @@ func (b *Broker) Consume(ctx context.Context, req *proto.ConsumeRequest) (*proto
     b.persistConsumerOffset(topicPartitionID, req.ConsumerId, newOffset)
 
 	return resp, nil
-}
-
-func (b *Broker) persistConsumerOffset(topicPartitionId, consumerId string, offset int32) {
-    b.messageCountMu.Lock()
-    defer b.messageCountMu.Unlock()
-
-    // Directory for offsets
-    dirPath := filepath.Join(b.BrokerInfo.BrokerName, topicPartitionId+"-offset")
-    err := os.MkdirAll(dirPath, 0755)
-    if err != nil {
-        b.logger.Fatalf("Failed to create directory: %v", err)
-        return
-    }
-
-    fileName := fmt.Sprintf("%s.bin", consumerId)
-    filePath := filepath.Join(dirPath, fileName)
-
-    // b.logger.Printf("Persisting offset %d for consumer %s in %s", offset, consumerId, filePath)
-
-    file, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-    if err != nil {
-        b.logger.Printf("Failed to open file %s for offset persistence: %v", filePath, err)
-        return
-    }
-    defer file.Close()
-
-    // Write the offset as binary (int32)
-    if err := binary.Write(file, binary.LittleEndian, offset); err != nil {
-        b.logger.Printf("Failed to write offset to file %s: %v", filePath, err)
-        return
-    }
-
-    if err := file.Sync(); err != nil {
-        b.logger.Printf("Failed to sync offset file %s: %v", filePath, err)
-        return
-    }
-
-    // b.logger.Printf("Successfully persisted offset %d for consumer %s to file: %s", offset, consumerId, filePath)
 }
 
 
