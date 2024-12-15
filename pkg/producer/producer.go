@@ -1,10 +1,9 @@
-package kueue
+package producer
 
 import (
 	"context"
 	"fmt"
 	"sync"
-	"time"
 
 	"kueue/kueue/proto"
 
@@ -12,7 +11,35 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// Producer represents a message producer in the message queue.
+type Partitioner func(key string, numPartitions int) int
+
+func defaultPartitioner(key string, numPartitions int) int {
+	return int(Hash(key)) % numPartitions
+}
+
+type roundRobin struct {
+	mu      sync.Mutex
+	counter int
+}
+
+func (rr *roundRobin) partition(_ string, numPartitions int) int {
+	rr.mu.Lock()
+	defer rr.mu.Unlock()
+	part := rr.counter % numPartitions
+	rr.counter++
+	return part
+}
+
+// Simple hash function for partitioning.
+func Hash(s string) uint32 {
+	// FNV-1a hash
+	var h uint32 = 2166136261
+	for i := 0; i < len(s); i++ {
+		h = (h ^ uint32(s[i])) * 16777619
+	}
+	return h
+}
+
 type Producer struct {
 	mu sync.RWMutex
 
@@ -23,10 +50,11 @@ type Producer struct {
 	brokerConns   map[string]*grpc.ClientConn
 	brokerClients map[string]proto.BrokerServiceClient
 
-	partitioner func(key string, numPartitions int) int
+	partitioner Partitioner
+	rrPartition *roundRobin
 }
 
-// NewProducer creates a new Producer connected to the specified controller.
+// Creates a new Producer connected to the specified controller.
 func NewProducer(controllerAddr string) (*Producer, error) {
 	var opts []grpc.DialOption
 	opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -45,70 +73,52 @@ func NewProducer(controllerAddr string) (*Producer, error) {
 		brokerConns:      make(map[string]*grpc.ClientConn),
 		brokerClients:    make(map[string]proto.BrokerServiceClient),
 		partitioner:      defaultPartitioner,
+		rrPartition:      &roundRobin{},
 	}, nil
 }
 
-// defaultPartitioner assigns a partition based on the message key.
-func defaultPartitioner(key string, numPartitions int) int {
-	return int(Hash(key)) % numPartitions
+// SetPartitioner switches the partitioning strategy.
+// If "roundrobin" is provided, it uses round robin; otherwise it defaults to the hash-based partitioner.
+func (p *Producer) SetPartitioner(strategy string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	switch strategy {
+	case "roundrobin":
+		p.partitioner = p.rrPartition.partition
+	default:
+		p.partitioner = defaultPartitioner
+	}
 }
 
-// Hash is a simple hash function for partitioning.
-func Hash(s string) uint32 {
-	// FNV-1a hash
-	var h uint32 = 2166136261
-	for i := 0; i < len(s); i++ {
-		h = (h ^ uint32(s[i])) * 16777619
-	}
-	return h
-}
+// CreateTopic attempts to create a topic with the given name, number of partitions, and replication factor.
+// If the topic already exists, it returns the existing metadata.
+func (p *Producer) CreateTopic(ctx context.Context, topic string, numPartitions, replicationFactor int) (*proto.ProducerTopicResponse, error) {
+	numParts := int32(numPartitions)
+	repFactor := int32(replicationFactor)
 
-// CreateTopic requests the controller to create a new topic.
-func (p *Producer) CreateTopic(ctx context.Context, topicName string, partitionCount int, replicationFactor int) error {
-	req := &proto.CreateTopicRequest{
-		TopicName:         topicName,
-		PartitionCount:    int32(partitionCount),
-		ReplicationFactor: int32(replicationFactor),
+	req := &proto.ProducerTopicRequest{
+		TopicName:         topic,
+		NumPartitions:     &numParts,  // optional
+		ReplicationFactor: &repFactor, // optional
 	}
 
-	resp, err := p.controllerClient.CreateTopic(ctx, req)
+	resp, err := p.controllerClient.GetTopic(ctx, req)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("failed to create or get topic %s: %w", topic, err)
 	}
 
-	if !resp.Success {
-		return fmt.Errorf("failed to create topic: %s", resp.ErrorMessage)
-	}
-
-	return nil
+	return resp, nil
 }
 
-// TODO: Only one Produce API with batched functionalities, send N requests to N brokers, where N is the number of partitions
-// Produce sends a message to the appropriate broker partition.
-func (p *Producer) Produce(ctx context.Context, topic string, key []string, value []string) error {
-	const maxRetries = 3
-	var lastErr error
-	for i := 0; i < maxRetries; i++ {
-		err := p.produceOnce(ctx, topic, key, value)
-		if err == nil {
-			return nil
-		}
-		lastErr = err
-
-		// Handle specific errors for retries
-		if isRetriableError(err) {
-			time.Sleep(time.Duration(i) * time.Second)
-			continue
-		} else {
-			return err
-		}
+// produceOnce attempts to produce messages without retries.
+func (p *Producer) Produce(ctx context.Context, topic string, producerID string, keys []string, values []string) error {
+	if len(keys) != len(values) {
+		return fmt.Errorf("mismatched keys and values length")
+	}
+	if len(keys) == 0 {
+		return fmt.Errorf("no messages to produce")
 	}
 
-	return fmt.Errorf("failed to produce message after %d retries: %v", maxRetries, lastErr)
-}
-
-// produceOnce attempts to produce a message without retries.
-func (p *Producer) produceOnce(ctx context.Context, topic string, key string, value string) error {
 	metadata, err := p.getTopicMetadata(ctx, topic)
 	if err != nil {
 		return err
@@ -118,63 +128,71 @@ func (p *Producer) produceOnce(ctx context.Context, topic string, key string, va
 		return fmt.Errorf("no partitions available for topic %s", topic)
 	}
 
-	// Decide partition
 	numPartitions := len(metadata.Partitions)
-	partitionIndex := p.partitioner(key, numPartitions)
-	if partitionIndex < 0 || partitionIndex >= numPartitions {
-		return fmt.Errorf("invalid partition index %d", partitionIndex)
+
+	partitionBatches := make(map[int][]*proto.ProducerMessage)
+	for i := 0; i < len(keys); i++ {
+		key := keys[i]
+		val := values[i]
+		partID := p.partitioner(key, numPartitions)
+		if partID < 0 || partID >= numPartitions {
+			return fmt.Errorf("invalid partition index %d", partID)
+		}
+		partitionBatches[partID] = append(partitionBatches[partID], &proto.ProducerMessage{
+			Key:   key,
+			Value: val,
+		})
 	}
 
-	partition := metadata.Partitions[partitionIndex]
+	// Send requests to each partition's leader broker
+	for partID, msgs := range partitionBatches {
+		partitionMeta := metadata.Partitions[partID]
+		leaderAddr := partitionMeta.LeaderAddress
+		if leaderAddr == "" {
+			return fmt.Errorf("no leader found for partition %d", partitionMeta.PartitionId)
+		}
 
-	// Get leader broker info
-	leaderBroker := partition.Leader
-	if leaderBroker == nil {
-		return fmt.Errorf("no leader found for partition %s", partition.PartitionId)
+		brokerClient, err := p.getBrokerClient(leaderAddr)
+		if err != nil {
+			return err
+		}
+
+		req := &proto.ProduceRequest{
+			TopicName:   topic,
+			ProducerId:  producerID,
+			PartitionId: partitionMeta.PartitionId,
+			Messages:    msgs,
+		}
+
+		resp, err := brokerClient.ProduceMessage(ctx, req)
+		if err != nil {
+			return fmt.Errorf("error producing to broker %s: %v", leaderAddr, err)
+		}
+
+		// Check the response for success or other info if needed
+		if resp.BaseOffset < 0 {
+			return fmt.Errorf("received invalid base_offset %d from broker %s for topic %s partition %d",
+				resp.BaseOffset, leaderAddr, topic, partitionMeta.PartitionId)
+		}
 	}
 
-	// Get or create broker client
-	brokerClient, err := p.getBrokerClient(leaderBroker)
-	if err != nil {
-		return err
-	}
-
-	req := &proto.ProduceRequest{
-		Topic:       topic,
-		PartitionId: partition.PartitionId,
-		Key:         key,
-		Value:       value,
-	}
-
-	resp, err := brokerClient.ProduceMessage(ctx, req)
-	if err != nil {
-		return err
-	}
-
-	if resp.Success {
-		return nil
-	}
-	return fmt.Errorf("failed to produce message: %s", resp.ErrorMessage)
+	return nil
 }
 
 // getTopicMetadata fetches partition metadata for the topic from the controller.
-func (p *Producer) getTopicMetadata(ctx context.Context, topic string) (*proto.ProducerTopicInfoResponse, error) {
-	req := &proto.ProducerTopicInfoRequest{
+func (p *Producer) getTopicMetadata(ctx context.Context, topic string) (*proto.ProducerTopicResponse, error) {
+	req := &proto.ProducerTopicRequest{
 		TopicName: topic,
 	}
-
-	resp, err := p.controllerClient.GetTopicProducer(ctx, req)
+	resp, err := p.controllerClient.GetTopic(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-
 	return resp, nil
 }
 
-// getBrokerClient retrieves or creates a gRPC client for the specified broker.
-func (p *Producer) getBrokerClient(nodeInfo *proto.NodeInfo) (proto.BrokerServiceClient, error) {
-	address := fmt.Sprintf("%s:%d", nodeInfo.Address, nodeInfo.Port)
-
+// getBrokerClient retrieves or creates a gRPC client for the specified broker address.
+func (p *Producer) getBrokerClient(address string) (proto.BrokerServiceClient, error) {
 	p.mu.RLock()
 	client, exists := p.brokerClients[address]
 	p.mu.RUnlock()
@@ -203,12 +221,4 @@ func (p *Producer) getBrokerClient(nodeInfo *proto.NodeInfo) (proto.BrokerServic
 	p.brokerClients[address] = brokerClient
 
 	return brokerClient, nil
-}
-
-// isRetriableError determines if an error is retriable.
-func isRetriableError(err error) bool {
-	// Implement logic to check for retriable errors
-	// For example, network errors, leader not available, etc.
-	// For simplicity, we'll retry on any error here
-	return true
 }
