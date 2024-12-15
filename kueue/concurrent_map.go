@@ -113,6 +113,17 @@ func (m *ConcurrentMap[K, V]) Keys() []K {
 	return keys
 }
 
+// CountKeys returns the total number of keys in the map.
+func (m *ConcurrentMap[K, V]) CountKeys() int {
+	count := 0
+	for _, shard := range m.shards {
+		shard.RLock()
+		count += len(shard.Items)
+		shard.RUnlock()
+	}
+	return count
+}
+
 // Example usage
 func main() {
 	cm := NewConcurrentMap[string, string](4)

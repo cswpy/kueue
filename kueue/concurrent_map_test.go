@@ -13,16 +13,16 @@ func TestBasicOperations(t *testing.T) {
 	cm := NewConcurrentMap[string, string](4)
 
 	// Initially, the map should be empty
-	if cm.Count() != 0 {
-		t.Fatalf("expected count = 0, got %d", cm.Count())
+	if cm.CountKeys() != 0 {
+		t.Fatalf("expected count = 0, got %d", cm.CountKeys())
 	}
 
 	// Set a value
 	cm.Set("foo", "bar")
 
 	// Check that count and Has work
-	if cm.Count() != 1 {
-		t.Fatalf("expected count = 1, got %d", cm.Count())
+	if cm.CountKeys() != 1 {
+		t.Fatalf("expected count = 1, got %d", cm.CountKeys())
 	}
 	if !cm.Has("foo") {
 		t.Fatalf("expected to have key 'foo'")
@@ -39,8 +39,8 @@ func TestBasicOperations(t *testing.T) {
 	if cm.Has("foo") {
 		t.Fatalf("did not expect to have key 'foo' after delete")
 	}
-	if cm.Count() != 0 {
-		t.Fatalf("expected count = 0 after deletion, got %d", cm.Count())
+	if cm.CountKeys() != 0 {
+		t.Fatalf("expected count = 0 after deletion, got %d", cm.CountKeys())
 	}
 
 	// Try getting a non-existent key
@@ -72,7 +72,7 @@ func TestConcurrentWrites(t *testing.T) {
 
 	// Verify count
 	expectedCount := numGoroutines * numKeysPerGoroutine
-	actualCount := cm.Count()
+	actualCount := cm.CountKeys()
 	if actualCount != expectedCount {
 		t.Fatalf("expected count = %d, got %d", expectedCount, actualCount)
 	}
@@ -171,8 +171,8 @@ func TestDeleteNonExistent(t *testing.T) {
 	cm.Set("foo", "bar")
 	cm.Delete("not_exist") // should not panic or cause error
 
-	if cm.Count() != 1 {
-		t.Fatalf("expected count = 1 after deleting non-existent key, got %d", cm.Count())
+	if cm.CountKeys() != 1 {
+		t.Fatalf("expected count = 1 after deleting non-existent key, got %d", cm.CountKeys())
 	}
 	if !cm.Has("foo") {
 		t.Fatalf("expected to still have 'foo'")
@@ -183,15 +183,15 @@ func TestDeleteNonExistent(t *testing.T) {
 func TestCountEmpty(t *testing.T) {
 	cm := NewConcurrentMap[string, string](4)
 
-	if cm.Count() != 0 {
-		t.Fatalf("expected count = 0 for new map, got %d", cm.Count())
+	if cm.CountKeys() != 0 {
+		t.Fatalf("expected count = 0 for new map, got %d", cm.CountKeys())
 	}
 
 	cm.Set("foo", "bar")
 	cm.Delete("foo")
 
-	if cm.Count() != 0 {
-		t.Fatalf("expected count = 0 after clearing map, got %d", cm.Count())
+	if cm.CountKeys() != 0 {
+		t.Fatalf("expected count = 0 after clearing map, got %d", cm.CountKeys())
 	}
 }
 
@@ -219,8 +219,8 @@ func TestSetOverwrite(t *testing.T) {
 		t.Fatalf("expected value = 2 for key 'x', got %v", val)
 	}
 
-	if cm.Count() != 1 {
-		t.Fatalf("expected count = 1, got %d", cm.Count())
+	if cm.CountKeys() != 1 {
+		t.Fatalf("expected count = 1, got %d", cm.CountKeys())
 	}
 }
 
