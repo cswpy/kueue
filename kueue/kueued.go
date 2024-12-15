@@ -3,9 +3,8 @@ package kueue
 import "kueue/kueue/proto"
 
 type BrokerInfo struct {
-	BrokerName   string // unique name of the broker
-	NodeAddr     string
-	PersistBatch int
+	BrokerName string // unique name of the broker
+	NodeAddr   string
 }
 
 type PartitionInfo struct {

@@ -20,7 +20,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
-	// proto1 "google.golang.org/protobuf/proto"
 )
 
 var (
@@ -31,16 +30,24 @@ var (
 type Broker struct {
 	proto.UnimplementedBrokerServiceServer
 
+	// Connection-related fields
 	BrokerInfo        *BrokerInfo
 	ControllerAddr    string
 	client            proto.ControllerServiceClient
-	logger            logrus.Entry
-	data              *ConcurrentMap[string, []*proto.ConsumerMessage] // topic_partition_id -> list of records, save protobuf messages directly for simplicity
-	consumerOffset    map[string]int32                                 // consumer_id_topic_partition_id -> offset
-	offsetLock        sync.RWMutex
-	messageCountMu    sync.Mutex
 	clientPool        ClientPool
 	WaitForReplicaACK bool
+	//ReplicaInfo map[string]
+
+	// In-memory MQ store
+	data           *ConcurrentMap[string, []*proto.ConsumerMessage] // topic_partition_id -> list of records, save protobuf messages directly for simplicity
+	consumerOffset map[string]int32                                 // consumer_id_topic_partition_id -> offset
+	offsetLock     sync.RWMutex
+
+	// Persistence
+	persister Persister
+
+	// Misc
+	logger logrus.Entry
 }
 
 func (b *Broker) GetConsumerOffset(consumerID string, topicName string, partitionID int32) int32 {
@@ -54,25 +61,29 @@ func (b *Broker) GetConsumerOffset(consumerID string, topicName string, partitio
 // NewMockBroker creates a new broker with an in-memory data store, incapable of communicating with gRPC services
 func NewMockBroker(logger logrus.Entry, brokerName string, persistBatch int) *Broker {
 	brokerInfo := &BrokerInfo{
-		BrokerName:   brokerName, // Use the provided brokerName
-		NodeAddr:     "localhost:50051",
-		PersistBatch: persistBatch,
+		BrokerName: brokerName, // Use the provided brokerName
+		NodeAddr:   "localhost:50051",
 	}
 
 	broker := &Broker{
 		BrokerInfo:     brokerInfo,
 		logger:         logger,
+		persister:      Persister{BaseDir: brokerName, NumMessagePerBatch: persistBatch},
 		data:           NewConcurrentMap[string, []*proto.ConsumerMessage](MAP_SHARD_SIZE),
 		consumerOffset: make(map[string]int32),
 	}
 
-	// Load persisted messages and offsets
-	if err := broker.loadPersistedData(); err != nil {
-		broker.logger.Printf("Failed to load persisted data: %v", err)
+	// Load persisted offsets and messages
+	if err := broker.persister.loadConsumerOffsets(broker.consumerOffset); os.IsNotExist(err) {
+		broker.logger.Infof("No consumer offsets found on storage, starting from scratch...")
+	} else if err != nil {
+		broker.logger.Fatalf("Failed to load consumer offsets: %v", err)
 	}
 
-	if err := broker.loadConsumerOffsets(); err != nil {
-		broker.logger.Printf("Failed to load consumer offsets: %v", err)
+	if err := broker.persister.loadPersistedData(broker.data); os.IsNotExist(err) {
+		broker.logger.Infof("No messages found on storage, starting from scratch...")
+	} else if err != nil {
+		broker.logger.Fatalf("Failed to load consumer messages: %v", err)
 	}
 
 	return broker
@@ -116,20 +127,24 @@ func NewBroker(info *BrokerInfo, controllerAddr string, logger logrus.Entry) (*B
 		clientPool:     MakeClientPool(),
 	}
 
-	// Load persisted messages and offsets
-	if err := broker.loadPersistedData(); err != nil {
-		broker.logger.Printf("Failed to load persisted data: %v", err)
-		return nil, err
+	// Load persisted offsets and messages
+	if err := broker.persister.loadConsumerOffsets(broker.consumerOffset); os.IsNotExist(err) {
+		broker.logger.Infof("No consumer offsets found on storage, starting from scratch...")
+	} else if err != nil {
+		broker.logger.Fatalf("Failed to load consumer offsets: %v", err)
 	}
 
-	if err := broker.loadConsumerOffsets(); err != nil {
-		broker.logger.Printf("Failed to load consumer offsets: %v", err)
-		return nil, err
+	if err := broker.persister.loadPersistedData(broker.data); os.IsNotExist(err) {
+		broker.logger.Infof("No messages found on storage, starting from scratch...")
+	} else if err != nil {
+		broker.logger.Fatalf("Failed to load consumer messages: %v", err)
 	}
 
 	return broker, nil
 }
 
+// controller calls AppointAsLeader to initialize a broker as a leader when a topic is created
+// or when a leader broker is down and a new leader needs to be appointed
 func (b *Broker) AppointAsLeader(ctx context.Context, req *proto.AppointmentRequest) (*proto.AppointmentResponse, error) {
 	b.logger.WithField("Topic", DBroker).Debugf("Received Appointment request: %v", req)
 
