@@ -3,11 +3,34 @@ syntax = "proto3";
 option go_package = "kueue/kueue/proto";
 
 service BrokerService {
-  rpc ProduceMessage (ProduceRequest) returns (ProduceResponse);
-  rpc ConsumeMessage (ConsumeRequest) returns (ConsumeResponse);
-  // rpc AddConsumer (AddConsumerRequest) returns (AddConsumerResponse); // not needed? if a consumer visits a broker for the first time, it will be added automatically
-  // rpc ReplicateMessage (ReplicateRequest) returns (ReplicateResponse); // Not implemented yet
+  rpc ProduceMessage (ProduceRequest) returns (ProduceResponse); // producer -> leader partition broker
+  rpc ConsumeMessage (ConsumeRequest) returns (ConsumeResponse); // consumer -> leader partition broker? allow replica to be read?
+  rpc ReplicateMessage (ReplicateRequest) returns (ReplicateResponse); // leader partition broker -> replica partition broker
+  rpc AppointAsLeader (AppointmentRequest) returns (AppointmentResponse); // controller -> leader partition broker
 }
+
+message AppointmentRequest {
+  string topic_name = 1;
+  int32 partition_id = 2;
+  repeated string broker_addrs = 3;
+}
+
+// The broker should reject the appointment if it received ReplicateRequest within a timeout
+// to prevent split-brain
+message AppointmentResponse {
+  bool leader_appointed = 1;
+}
+
+message AddTopicPartitionResponse {}
+
+message ReplicateRequest {
+  string topic_name = 1;
+  int32 partition_id = 2;
+  string broker_id = 3;
+  repeated ConsumerMessage messages = 4;
+}
+
+message ReplicateResponse {}
 
 // Producer sends a ProduceRequest to the Broker
 message ProduceRequest {

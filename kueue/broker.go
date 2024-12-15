@@ -2,17 +2,13 @@ package kueue
 
 import (
 	"context"
-	// "encoding/binary"
-	// "io"
-	// "io/fs"
-	// "sort"
-	// "strings"
 
 	// "encoding/gob"
 	"fmt"
 	"kueue/kueue/proto"
 	"log"
 	"os"
+
 	// "path/filepath"
 	"sync"
 	"time"
@@ -35,49 +31,51 @@ var (
 type Broker struct {
 	proto.UnimplementedBrokerServiceServer
 
-	BrokerInfo     *BrokerInfo
-	ControllerAddr string
-	client         proto.ControllerServiceClient
-	logger         logrus.Entry
-	data           *ConcurrentMap[string, []*proto.ConsumerMessage] // topic_partition_id -> list of records, save protobuf messages directly for simplicity
-	consumerOffset map[string]int32                                 // consumer_id_topic_partition_id -> offset
-	offsetLock     sync.RWMutex
-	messageCountMu sync.Mutex
+	BrokerInfo        *BrokerInfo
+	ControllerAddr    string
+	client            proto.ControllerServiceClient
+	logger            logrus.Entry
+	data              *ConcurrentMap[string, []*proto.ConsumerMessage] // topic_partition_id -> list of records, save protobuf messages directly for simplicity
+	consumerOffset    map[string]int32                                 // consumer_id_topic_partition_id -> offset
+	offsetLock        sync.RWMutex
+	messageCountMu    sync.Mutex
+	clientPool        ClientPool
+	WaitForReplicaACK bool
 }
 
 func (b *Broker) GetConsumerOffset(consumerID string, topicName string, partitionID int32) int32 {
-    topicPartitionID := fmt.Sprintf("%s-%d", topicName, partitionID)
-    offsetLookupKey := fmt.Sprintf("%s-%s", consumerID, topicPartitionID)
-    b.offsetLock.RLock()
-    defer b.offsetLock.RUnlock()
-    return b.consumerOffset[offsetLookupKey]
+	topicPartitionID := fmt.Sprintf("%s-%d", topicName, partitionID)
+	offsetLookupKey := fmt.Sprintf("%s-%s", consumerID, topicPartitionID)
+	b.offsetLock.RLock()
+	defer b.offsetLock.RUnlock()
+	return b.consumerOffset[offsetLookupKey]
 }
 
 // NewMockBroker creates a new broker with an in-memory data store, incapable of communicating with gRPC services
 func NewMockBroker(logger logrus.Entry, brokerName string, persistBatch int) *Broker {
-    brokerInfo := &BrokerInfo{
-        BrokerName:   brokerName, // Use the provided brokerName
-        NodeAddr:     "localhost:50051",
-        PersistBatch: persistBatch,
-    }
+	brokerInfo := &BrokerInfo{
+		BrokerName:   brokerName, // Use the provided brokerName
+		NodeAddr:     "localhost:50051",
+		PersistBatch: persistBatch,
+	}
 
-    broker := &Broker{
-        BrokerInfo:     brokerInfo,
-        logger:         logger,
-        data:           NewConcurrentMap[string, []*proto.ConsumerMessage](MAP_SHARD_SIZE),
-        consumerOffset: make(map[string]int32),
-    }
+	broker := &Broker{
+		BrokerInfo:     brokerInfo,
+		logger:         logger,
+		data:           NewConcurrentMap[string, []*proto.ConsumerMessage](MAP_SHARD_SIZE),
+		consumerOffset: make(map[string]int32),
+	}
 
-    // Load persisted messages and offsets
-    if err := broker.loadPersistedData(); err != nil {
-        broker.logger.Printf("Failed to load persisted data: %v", err)
-    }
+	// Load persisted messages and offsets
+	if err := broker.loadPersistedData(); err != nil {
+		broker.logger.Printf("Failed to load persisted data: %v", err)
+	}
 
-    if err := broker.loadConsumerOffsets(); err != nil {
-        broker.logger.Printf("Failed to load consumer offsets: %v", err)
-    }
+	if err := broker.loadConsumerOffsets(); err != nil {
+		broker.logger.Printf("Failed to load consumer offsets: %v", err)
+	}
 
-    return broker
+	return broker
 }
 
 func NewBroker(info *BrokerInfo, controllerAddr string, logger logrus.Entry) (*Broker, error) {
@@ -102,11 +100,11 @@ func NewBroker(info *BrokerInfo, controllerAddr string, logger logrus.Entry) (*B
 
 	// Create directory for broker folder
 	dirPath := info.BrokerName
-    err = os.MkdirAll(dirPath, 0755)
-    if err != nil {
-        log.Fatalf("Failed to create directory: %v", err)
-        return nil, err
-    }
+	err = os.MkdirAll(dirPath, 0755)
+	if err != nil {
+		log.Fatalf("Failed to create directory: %v", err)
+		return nil, err
+	}
 
 	broker := &Broker{
 		BrokerInfo:     info,
@@ -115,20 +113,38 @@ func NewBroker(info *BrokerInfo, controllerAddr string, logger logrus.Entry) (*B
 		logger:         logger,
 		data:           NewConcurrentMap[string, []*proto.ConsumerMessage](MAP_SHARD_SIZE),
 		consumerOffset: make(map[string]int32),
+		clientPool:     MakeClientPool(),
 	}
 
 	// Load persisted messages and offsets
-    if err := broker.loadPersistedData(); err != nil {
-        broker.logger.Printf("Failed to load persisted data: %v", err)
-        return nil, err
-    }
+	if err := broker.loadPersistedData(); err != nil {
+		broker.logger.Printf("Failed to load persisted data: %v", err)
+		return nil, err
+	}
 
-    if err := broker.loadConsumerOffsets(); err != nil {
-        broker.logger.Printf("Failed to load consumer offsets: %v", err)
-        return nil, err
-    }
+	if err := broker.loadConsumerOffsets(); err != nil {
+		broker.logger.Printf("Failed to load consumer offsets: %v", err)
+		return nil, err
+	}
 
-	return broker,nil
+	return broker, nil
+}
+
+func (b *Broker) AppointAsLeader(ctx context.Context, req *proto.AppointmentRequest) (*proto.AppointmentResponse, error) {
+	b.logger.WithField("Topic", DBroker).Debugf("Received Appointment request: %v", req)
+
+	topicPartitionID := fmt.Sprintf("%s-%d", req.TopicName, req.PartitionId)
+
+	// Wait for lock before loading data
+	mapShard := b.data.ShardForKey(topicPartitionID)
+	mapShard.Lock()
+	defer mapShard.Unlock()
+
+	if _, ok := mapShard.Items[topicPartitionID]; !ok {
+		mapShard.Items[topicPartitionID] = make([]*proto.ConsumerMessage, 0)
+	}
+
+	return &proto.AppointmentResponse{}, nil
 }
 
 func (b *Broker) Produce(ctx context.Context, req *proto.ProduceRequest) (*proto.ProduceResponse, error) {
@@ -140,7 +156,6 @@ func (b *Broker) Produce(ctx context.Context, req *proto.ProduceRequest) (*proto
 	// Wait for lock before loading data
 	mapShard := b.data.ShardForKey(topicPartitionID)
 	mapShard.Lock()
-	defer mapShard.Unlock()
 
 	var topicPartition []*proto.ConsumerMessage
 	var ok bool
@@ -167,18 +182,22 @@ func (b *Broker) Produce(ctx context.Context, req *proto.ProduceRequest) (*proto
 		topicPartition = append(topicPartition, consumerMsg)
 		nextOffset++
 		b.persistData(topicPartitionID, consumerMsg)
-		
 	}
 
+	// Finished persisting to object storage
 	mapShard.Items[topicPartitionID] = topicPartition
+	mapShard.Unlock()
+
+	// Depending on the WaitForReplicaACK flag, we may need to wait for the replicas to acknowledge the message
+	if b.WaitForReplicaACK {
+
+	}
 
 	return &proto.ProduceResponse{
 		TopicName:  req.TopicName,
 		BaseOffset: baseOffset,
 	}, nil
 }
-
-
 
 // TODO: handle the case where new consumers start consuming from the beginning of the topic-partition, which is not in main memory but on disk
 // Consume returns a batch of messages from a topic-partition, it checks whether the topic-partition exists in the broker's data
@@ -237,11 +256,30 @@ func (b *Broker) Consume(ctx context.Context, req *proto.ConsumeRequest) (*proto
 	newOffset := int32(endIndex)
 	b.consumerOffset[offsetLookupKey] = newOffset
 	// Persist the updated offset
-    b.persistConsumerOffset(topicPartitionID, req.ConsumerId, newOffset)
+	b.persistConsumerOffset(topicPartitionID, req.ConsumerId, newOffset)
 
 	return resp, nil
 }
 
+func (b *Broker) ReplicateMessage(ctx context.Context, req *proto.ReplicateRequest) (*proto.ReplicateResponse, error) {
+	b.logger.WithField("Topic", DBroker).Debugf("Received ReplicateMessage request: %v", req)
+
+	topicPartitionID := fmt.Sprintf("%s-%d", req.TopicName, req.PartitionId)
+
+	// Wait for lock before loading data
+	mapShard := b.data.ShardForKey(topicPartitionID)
+	mapShard.Lock()
+	defer mapShard.Unlock()
+
+	if _, ok := mapShard.Items[topicPartitionID]; !ok {
+		mapShard.Items[topicPartitionID] = make([]*proto.ConsumerMessage, 0, len(req.Messages))
+	}
+
+	// Getting Offset from the last record in the partition
+	mapShard.Items[topicPartitionID] = append(mapShard.Items[topicPartitionID], req.Messages...)
+
+	return &proto.ReplicateResponse{}, nil
+}
 
 func (b *Broker) SendHeartbeat() {
 

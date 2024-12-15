@@ -19,8 +19,10 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	BrokerService_ProduceMessage_FullMethodName = "/BrokerService/ProduceMessage"
-	BrokerService_ConsumeMessage_FullMethodName = "/BrokerService/ConsumeMessage"
+	BrokerService_ProduceMessage_FullMethodName   = "/BrokerService/ProduceMessage"
+	BrokerService_ConsumeMessage_FullMethodName   = "/BrokerService/ConsumeMessage"
+	BrokerService_ReplicateMessage_FullMethodName = "/BrokerService/ReplicateMessage"
+	BrokerService_AppointAsLeader_FullMethodName  = "/BrokerService/AppointAsLeader"
 )
 
 // BrokerServiceClient is the client API for BrokerService service.
@@ -29,6 +31,8 @@ const (
 type BrokerServiceClient interface {
 	ProduceMessage(ctx context.Context, in *ProduceRequest, opts ...grpc.CallOption) (*ProduceResponse, error)
 	ConsumeMessage(ctx context.Context, in *ConsumeRequest, opts ...grpc.CallOption) (*ConsumeResponse, error)
+	ReplicateMessage(ctx context.Context, in *ReplicateRequest, opts ...grpc.CallOption) (*ReplicateResponse, error)
+	AppointAsLeader(ctx context.Context, in *AppointmentRequest, opts ...grpc.CallOption) (*AppointmentResponse, error)
 }
 
 type brokerServiceClient struct {
@@ -59,12 +63,34 @@ func (c *brokerServiceClient) ConsumeMessage(ctx context.Context, in *ConsumeReq
 	return out, nil
 }
 
+func (c *brokerServiceClient) ReplicateMessage(ctx context.Context, in *ReplicateRequest, opts ...grpc.CallOption) (*ReplicateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReplicateResponse)
+	err := c.cc.Invoke(ctx, BrokerService_ReplicateMessage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *brokerServiceClient) AppointAsLeader(ctx context.Context, in *AppointmentRequest, opts ...grpc.CallOption) (*AppointmentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AppointmentResponse)
+	err := c.cc.Invoke(ctx, BrokerService_AppointAsLeader_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // BrokerServiceServer is the server API for BrokerService service.
 // All implementations must embed UnimplementedBrokerServiceServer
 // for forward compatibility.
 type BrokerServiceServer interface {
 	ProduceMessage(context.Context, *ProduceRequest) (*ProduceResponse, error)
 	ConsumeMessage(context.Context, *ConsumeRequest) (*ConsumeResponse, error)
+	ReplicateMessage(context.Context, *ReplicateRequest) (*ReplicateResponse, error)
+	AppointAsLeader(context.Context, *AppointmentRequest) (*AppointmentResponse, error)
 	mustEmbedUnimplementedBrokerServiceServer()
 }
 
@@ -80,6 +106,12 @@ func (UnimplementedBrokerServiceServer) ProduceMessage(context.Context, *Produce
 }
 func (UnimplementedBrokerServiceServer) ConsumeMessage(context.Context, *ConsumeRequest) (*ConsumeResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ConsumeMessage not implemented")
+}
+func (UnimplementedBrokerServiceServer) ReplicateMessage(context.Context, *ReplicateRequest) (*ReplicateResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ReplicateMessage not implemented")
+}
+func (UnimplementedBrokerServiceServer) AppointAsLeader(context.Context, *AppointmentRequest) (*AppointmentResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AppointAsLeader not implemented")
 }
 func (UnimplementedBrokerServiceServer) mustEmbedUnimplementedBrokerServiceServer() {}
 func (UnimplementedBrokerServiceServer) testEmbeddedByValue()                       {}
@@ -138,6 +170,42 @@ func _BrokerService_ConsumeMessage_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BrokerService_ReplicateMessage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReplicateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BrokerServiceServer).ReplicateMessage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BrokerService_ReplicateMessage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BrokerServiceServer).ReplicateMessage(ctx, req.(*ReplicateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BrokerService_AppointAsLeader_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AppointmentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BrokerServiceServer).AppointAsLeader(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BrokerService_AppointAsLeader_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BrokerServiceServer).AppointAsLeader(ctx, req.(*AppointmentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // BrokerService_ServiceDesc is the grpc.ServiceDesc for BrokerService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -152,6 +220,14 @@ var BrokerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ConsumeMessage",
 			Handler:    _BrokerService_ConsumeMessage_Handler,
+		},
+		{
+			MethodName: "ReplicateMessage",
+			Handler:    _BrokerService_ReplicateMessage_Handler,
+		},
+		{
+			MethodName: "AppointAsLeader",
+			Handler:    _BrokerService_AppointAsLeader_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
