@@ -100,17 +100,6 @@ func (m *ConcurrentMap[K, V]) Has(key K) bool {
 	return ok
 }
 
-// Count returns the total number of items in the map.
-func (m *ConcurrentMap[K, V]) Count() int {
-	count := 0
-	for _, shard := range m.shards {
-		shard.RLock()
-		count += len(shard.Items)
-		shard.RUnlock()
-	}
-	return count
-}
-
 // Keys returns a slice containing all the keys in the map.
 func (m *ConcurrentMap[K, V]) Keys() []K {
 	keys := make([]K, 0)

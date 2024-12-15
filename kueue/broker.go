@@ -77,14 +77,16 @@ func NewMockBroker(logger logrus.Entry, brokerName string, persistBatch int) *Br
 	if err := broker.persister.loadConsumerOffsets(broker.consumerOffset); os.IsNotExist(err) {
 		broker.logger.Infof("No consumer offsets found on storage, starting from scratch...")
 	} else if err != nil {
-		broker.logger.Fatalf("Failed to load consumer offsets: %v", err)
+		broker.logger.Fatalf("Failed to load consumer offsets: %+v", err)
 	}
+	broker.logger.Infof("Loaded %d consumer offsets from storage", len(broker.consumerOffset))
 
 	if err := broker.persister.loadPersistedData(broker.data); os.IsNotExist(err) {
 		broker.logger.Infof("No messages found on storage, starting from scratch...")
 	} else if err != nil {
-		broker.logger.Fatalf("Failed to load consumer messages: %v", err)
+		broker.logger.Fatalf("Failed to load consumer messages: %+v", err)
 	}
+	broker.logger.Infof("Loaded %d topic-partitions from storage", len(broker.data.Keys()))
 
 	return broker
 }
@@ -196,7 +198,8 @@ func (b *Broker) Produce(ctx context.Context, req *proto.ProduceRequest) (*proto
 		}
 		topicPartition = append(topicPartition, consumerMsg)
 		nextOffset++
-		b.persistData(topicPartitionID, consumerMsg)
+		// b.persistData(topicPartitionID, consumerMsg)
+		b.persister.persistData(topicPartitionID, consumerMsg)
 	}
 
 	// Finished persisting to object storage
@@ -271,8 +274,8 @@ func (b *Broker) Consume(ctx context.Context, req *proto.ConsumeRequest) (*proto
 	newOffset := int32(endIndex)
 	b.consumerOffset[offsetLookupKey] = newOffset
 	// Persist the updated offset
-	b.persistConsumerOffset(topicPartitionID, req.ConsumerId, newOffset)
-
+	// b.persistConsumerOffset(topicPartitionID, req.ConsumerId, newOffset)
+	b.persister.persistConsumerOffset(topicPartitionID, req.ConsumerId, newOffset)
 	return resp, nil
 }
 
