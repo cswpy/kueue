@@ -9,9 +9,9 @@ type BrokerInfo struct {
 
 type PartitionInfo struct {
 	PartitionID       int         // unique id of the partition
-	OwnerBroker       *BrokerInfo // the broker that owns this partition
+	LeaderBroker      *BrokerInfo // the broker that owns this partition
+	ReplicaBrokers    []*BrokerInfo
 	AssignedConsumers []string
-	IsLeader          bool
 }
 
 func (pi *PartitionInfo) getProto() *proto.PartitionMetadata {

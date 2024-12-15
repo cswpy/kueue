@@ -36,7 +36,8 @@ type Broker struct {
 	client            proto.ControllerServiceClient
 	clientPool        ClientPool
 	WaitForReplicaACK bool
-	//ReplicaInfo map[string]
+	ReplicaInfo       map[string][]*BrokerInfo // topic_partition_id -> list of BrokerInfo that host the replicas
+	replicaLock       sync.Mutex
 
 	// In-memory MQ store
 	data           *ConcurrentMap[string, []*proto.ConsumerMessage] // topic_partition_id -> list of records, save protobuf messages directly for simplicity
@@ -152,16 +153,38 @@ func (b *Broker) AppointAsLeader(ctx context.Context, req *proto.AppointmentRequ
 
 	topicPartitionID := fmt.Sprintf("%s-%d", req.TopicName, req.PartitionId)
 
-	// Wait for lock before loading data
+	// TODO Determine whether the broker should accept/confirm the appointment
+	// for now, just accept the appointment
+	var accepted bool = true
+	if !accepted {
+		return &proto.AppointmentResponse{LeaderAppointed: false}, nil
+	}
+
+	// Initialize the topic-partition if it does not exist
 	mapShard := b.data.ShardForKey(topicPartitionID)
 	mapShard.Lock()
-	defer mapShard.Unlock()
 
 	if _, ok := mapShard.Items[topicPartitionID]; !ok {
 		mapShard.Items[topicPartitionID] = make([]*proto.ConsumerMessage, 0)
 	}
 
-	return &proto.AppointmentResponse{}, nil
+	mapShard.Unlock()
+
+	// Update replica info for the topic-partition
+	replicas := make([]*BrokerInfo, 0, len(req.ReplicaBrokers))
+
+	for _, brokerMetadata := range req.ReplicaBrokers {
+		replicas = append(replicas, &BrokerInfo{
+			BrokerName: brokerMetadata.BrokerId,
+			NodeAddr:   brokerMetadata.Addr,
+		})
+	}
+
+	b.replicaLock.Lock()
+	b.ReplicaInfo[topicPartitionID] = replicas
+	b.replicaLock.Unlock()
+
+	return &proto.AppointmentResponse{LeaderAppointed: true}, nil
 }
 
 func (b *Broker) Produce(ctx context.Context, req *proto.ProduceRequest) (*proto.ProduceResponse, error) {

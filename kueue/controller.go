@@ -23,6 +23,8 @@ type Controller struct {
 	Metadata     *Metadata    // Stores cluster metadata, has brokerInfos and topicInfos
 	BrokerStatus map[string]time.Time
 	logger       logrus.Entry
+
+	clientPool ClientPool
 }
 
 // NewController initializes a new Controller.
@@ -31,6 +33,7 @@ func NewController(controllerID string, logger logrus.Entry) *Controller {
 		Metadata:     MakeNewMetadata(controllerID),
 		BrokerStatus: make(map[string]time.Time),
 		logger:       logger,
+		clientPool:   MakeClientPool(),
 	}
 }
 

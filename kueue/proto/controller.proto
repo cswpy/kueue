@@ -16,14 +16,22 @@ message ProducerTopicRequest {
   optional int32 replication_factor = 3;
 }
 
+// Controller returns the leader broker info to producer
 message ProducerTopicResponse {
   string topic_name = 1;
-  repeated PartitionMetadata partitions = 2;
+  repeated PartitionInfo partitions = 2;
 }
 
-message PartitionMetadata {
+// When only returning leader, leave replicas empty
+message PartitionInfo {
   int32 partition_id = 1;
-  string leader_address = 2;
+  BrokerInfo leader = 2;
+  repeated BrokerInfo replicas = 3;
+}
+
+message BrokerInfo {
+  string broker_id = 1;
+  string addr = 2;
 }
 
 message SubscribeRequest {
@@ -31,9 +39,10 @@ message SubscribeRequest {
   string consumer_id = 2;
 }
 
+// Controller returns all broker info, leader and replicas, to consumer
 message SubscribeResponse {
   string topic_name = 1;
-  PartitionMetadata partition = 2;
+  PartitionInfo partition = 2;
 }
 
 message HeartbeatRequest {

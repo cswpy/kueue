@@ -2,6 +2,8 @@ syntax = "proto3";
 
 option go_package = "kueue/kueue/proto";
 
+import "kueue/proto/controller.proto";
+
 service BrokerService {
   rpc ProduceMessage (ProduceRequest) returns (ProduceResponse); // producer -> leader partition broker
   rpc ConsumeMessage (ConsumeRequest) returns (ConsumeResponse); // consumer -> leader partition broker? allow replica to be read?
@@ -12,7 +14,7 @@ service BrokerService {
 message AppointmentRequest {
   string topic_name = 1;
   int32 partition_id = 2;
-  repeated string broker_addrs = 3;
+  repeated BrokerInfo replica_brokers = 3;
 }
 
 // The broker should reject the appointment if it received ReplicateRequest within a timeout
@@ -26,7 +28,7 @@ message AddTopicPartitionResponse {}
 message ReplicateRequest {
   string topic_name = 1;
   int32 partition_id = 2;
-  string broker_id = 3;
+  string leader_broker_id = 3;
   repeated ConsumerMessage messages = 4;
 }
 
@@ -67,11 +69,3 @@ message ConsumerMessage {
   string key = 3;
   string value = 4;
 }
-
-// message AddConsumerRequest {
-//   string topic_name = 1;
-//   int32 partition_id = 2;
-//   string consumer_id = 3;
-// }
-
-// message AddConsumerResponse {}
