@@ -114,7 +114,11 @@ func (p *Persister) readMessagesFromFile(filePath string) ([]*proto.ConsumerMess
 	return messages, nil
 }
 
-func (p *Persister) persistData(topicPartitionId string, msg *proto.ConsumerMessage) error {
+func (p *Persister) persistData(topicPartitionId string, msgs ...*proto.ConsumerMessage) error {
+	if len(msgs) == 0 {
+		return nil
+	}
+
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -124,35 +128,58 @@ func (p *Persister) persistData(topicPartitionId string, msg *proto.ConsumerMess
 		return err
 	}
 
-	// Serialize the message
-	dataBytes, err := proto1.Marshal(msg)
-	if err != nil {
-		return err
+	var currentFile *os.File
+	var currentFileIndex int
+	var offset = int(msgs[0].Offset)
+
+	defer func() {
+		if currentFile != nil {
+			currentFile.Close()
+		}
+	}()
+
+	for _, msg := range msgs {
+		if offset%p.NumMessagePerBatch == 0 {
+			// Close the current file if open
+			if currentFile != nil {
+				currentFile.Close()
+			}
+
+			// Determine the new file index and path
+			currentFileIndex = (offset / p.NumMessagePerBatch) * p.NumMessagePerBatch
+			fileName := fmt.Sprintf("%010d.bin", currentFileIndex)
+			filePath := filepath.Join(dirPath, fileName)
+
+			// Open or create the new file
+			currentFile, err = os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+			if err != nil {
+				return err
+			}
+		}
+
+		// Serialize the message
+		dataBytes, err := proto1.Marshal(msg)
+		if err != nil {
+			return err
+		}
+
+		// Write the length and data to the file
+		length := uint32(len(dataBytes))
+		if err := binary.Write(currentFile, binary.LittleEndian, length); err != nil {
+			return err
+		}
+		if _, err := currentFile.Write(dataBytes); err != nil {
+			return err
+		}
+
+		offset++
 	}
 
-	messageCount := msg.Offset
-	fileIndex := (int(messageCount) / p.NumMessagePerBatch) * p.NumMessagePerBatch
-	fileName := fmt.Sprintf("%010d.bin", fileIndex)
-	filePath := filepath.Join(dirPath, fileName)
-
-	// b.logger.Printf("Writing to file: %s, Offset: %d, Length: %d", filePath, msg.Offset, len(dataBytes))
-
-	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	length := uint32(len(dataBytes))
-	if err := binary.Write(file, binary.LittleEndian, length); err != nil {
-		return err
-	}
-	if _, err := file.Write(dataBytes); err != nil {
-		return err
-	}
-
-	if err := file.Sync(); err != nil {
-		return err
+	// Sync the last file if still open
+	if currentFile != nil {
+		if err := currentFile.Sync(); err != nil {
+			return err
+		}
 	}
 
 	return nil

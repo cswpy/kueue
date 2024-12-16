@@ -25,11 +25,11 @@ message ProducerTopicResponse {
 // When only returning leader, leave replicas empty
 message PartitionInfo {
   int32 partition_id = 1;
-  BrokerInfo leader = 2;
-  repeated BrokerInfo replicas = 3;
+  BrokerInfoProto leader = 2;
+  repeated BrokerInfoProto replicas = 3;
 }
 
-message BrokerInfo {
+message BrokerInfoProto {
   string broker_id = 1;
   string addr = 2;
 }

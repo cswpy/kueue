@@ -7,17 +7,30 @@ type BrokerInfo struct {
 	NodeAddr   string
 }
 
+func (bi *BrokerInfo) getProto() *proto.BrokerInfoProto {
+	return &proto.BrokerInfoProto{
+		BrokerId: bi.BrokerName,
+		Addr:     bi.NodeAddr,
+	}
+}
+
 type PartitionInfo struct {
 	PartitionID       int         // unique id of the partition
 	LeaderBroker      *BrokerInfo // the broker that owns this partition
 	ReplicaBrokers    []*BrokerInfo
-	AssignedConsumers []string
+	AssignedConsumers map[string]struct{} // a set of consumer names
 }
 
-func (pi *PartitionInfo) getProto() *proto.PartitionMetadata {
-	return &proto.PartitionMetadata{
-		PartitionId:   int32(pi.PartitionID),
-		LeaderAddress: pi.OwnerBroker.NodeAddr,
+func (pi *PartitionInfo) getProto() *proto.PartitionInfo {
+	var replicas []*proto.BrokerInfoProto
+	for _, replica := range pi.ReplicaBrokers {
+		replicas = append(replicas, replica.getProto())
+	}
+
+	return &proto.PartitionInfo{
+		PartitionId: int32(pi.PartitionID),
+		Leader:      pi.LeaderBroker.getProto(),
+		Replicas:    replicas,
 	}
 }
 

@@ -44,8 +44,10 @@ func (m *Metadata) createTopic(topicName string, numPartitions int, replicationF
 
 	for i := 0; i < numPartitions; i++ {
 		ti.Partitions[i] = &PartitionInfo{
-			PartitionID: i,
-			IsLeader:    true,
+			PartitionID:       i,
+			LeaderBroker:      nil,
+			ReplicaBrokers:    make([]*BrokerInfo, 0),
+			AssignedConsumers: make(map[string]struct{}),
 		}
 	}
 
@@ -54,27 +56,41 @@ func (m *Metadata) createTopic(topicName string, numPartitions int, replicationF
 	return ti
 }
 
-func (m *Metadata) assignTopicPartitionToBroker(topicName string, partitionId int, brokerName string) error {
-
-	if _, ok := m.TopicInfos[topicName]; !ok {
+func (m *Metadata) assignPartitionReplica(topicName string, partitionId int, replicaSet []string) error {
+	var ok bool
+	var ti *TopicInfo
+	if ti, ok = m.TopicInfos[topicName]; !ok {
 		err := fmt.Errorf("topic %s does not exist", topicName)
 		return err
 	}
 
-	ti := m.TopicInfos[topicName]
-	if _, ok := ti.Partitions[partitionId]; !ok {
+	var partition *PartitionInfo
+	if partition, ok = ti.Partitions[partitionId]; !ok {
 		err := fmt.Errorf("partition %d does not exist", partitionId)
 		return err
 	}
 
-	partition := ti.Partitions[partitionId]
+	leader := replicaSet[0]
+	var leaderBroker *BrokerInfo
 
-	if _, ok := m.BrokerInfos[brokerName]; !ok {
-		err := fmt.Errorf("broker %s does not exist", brokerName)
+	// Assign leader broker
+	if leaderBroker, ok = m.BrokerInfos[leader]; !ok {
+		err := fmt.Errorf("partition leader broker %s does not exist", leader)
 		return err
 	}
+	partition.LeaderBroker = leaderBroker
 
-	partition.OwnerBroker = m.BrokerInfos[brokerName]
+	// Assign replicas
+	var replicaBroker *BrokerInfo
+	for idx := 1; idx < len(replicaSet); idx++ {
+		replica := replicaSet[idx]
+
+		if replicaBroker, ok = m.BrokerInfos[replica]; !ok {
+			err := fmt.Errorf("partition replica broker %s does not exist", replica)
+			return err
+		}
+		partition.ReplicaBrokers = append(partition.ReplicaBrokers, replicaBroker)
+	}
 	return nil
 }
 

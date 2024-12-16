@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+	"golang.org/x/sync/errgroup"
 
 	// "golang.org/x/text/message"
 	"google.golang.org/grpc"
@@ -193,12 +194,22 @@ func (b *Broker) Produce(ctx context.Context, req *proto.ProduceRequest) (*proto
 	partitionID := int(req.PartitionId)
 	topicPartitionID := fmt.Sprintf("%s-%d", req.TopicName, partitionID)
 
+	// Check if this broker is the leader for the topic-partition
+	// if not, return an error
+	b.replicaLock.Lock()
+	replicas, ok := b.ReplicaInfo[topicPartitionID]
+	b.replicaLock.Unlock()
+	if !ok {
+		err := fmt.Errorf("broker %s is not the leader for topic-partition %s", b.BrokerInfo.BrokerName, topicPartitionID)
+		b.logger.WithField("Topic", DBroker).Error(err)
+		return nil, status.Error(codes.FailedPrecondition, err.Error())
+	}
+
 	// Wait for lock before loading data
 	mapShard := b.data.ShardForKey(topicPartitionID)
 	mapShard.Lock()
 
 	var topicPartition []*proto.ConsumerMessage
-	var ok bool
 	if topicPartition, ok = mapShard.Items[topicPartitionID]; !ok {
 		mapShard.Items[topicPartitionID] = make([]*proto.ConsumerMessage, 0)
 	}
@@ -211,6 +222,8 @@ func (b *Broker) Produce(ctx context.Context, req *proto.ProduceRequest) (*proto
 	}
 	nextOffset := baseOffset
 
+	var pendingConsumerMsgs []*proto.ConsumerMessage
+
 	// Append records to partition, since topicPartition may be reallocated in append, we need to update the map
 	for _, msg := range req.Messages {
 		consumerMsg := &proto.ConsumerMessage{
@@ -219,19 +232,45 @@ func (b *Broker) Produce(ctx context.Context, req *proto.ProduceRequest) (*proto
 			Key:       msg.Key,
 			Value:     msg.Value,
 		}
-		topicPartition = append(topicPartition, consumerMsg)
+		pendingConsumerMsgs = append(pendingConsumerMsgs, consumerMsg)
 		nextOffset++
-		// b.persistData(topicPartitionID, consumerMsg)
-		b.persister.persistData(topicPartitionID, consumerMsg)
 	}
+
+	topicPartition = append(topicPartition, pendingConsumerMsgs...)
+
+	b.persister.persistData(topicPartitionID, pendingConsumerMsgs...)
 
 	// Finished persisting to object storage
 	mapShard.Items[topicPartitionID] = topicPartition
 	mapShard.Unlock()
 
+	g, ctx := errgroup.WithContext(context.Background())
+
 	// Depending on the WaitForReplicaACK flag, we may need to wait for the replicas to acknowledge the message
 	if b.WaitForReplicaACK {
-
+		// Start N goroutines to replicate the message to the replicas, one error returned will cancel all other goroutines
+		for _, replica := range replicas {
+			g.Go(func() error {
+				client, err := b.clientPool.GetClient(replica)
+				if err != nil {
+					b.logger.WithField("Topic", DBroker).Errorf("Failed to get client for replica %s: %+v", replica.BrokerName, err)
+					return err
+				}
+				_, err = client.ReplicateMessage(ctx, &proto.ReplicateRequest{
+					TopicName:   req.TopicName,
+					PartitionId: req.PartitionId,
+					Messages:    pendingConsumerMsgs,
+				})
+				if err != nil {
+					newErr := fmt.Errorf("failed to replicate message to replica %s: %v", replica.BrokerName, err)
+					b.logger.Error(newErr)
+					return newErr
+				}
+				return nil
+			})
+		}
+	} else {
+		// pass all messages to an async goroutine to replicate to all replicas
 	}
 
 	return &proto.ProduceResponse{

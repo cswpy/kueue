@@ -14,7 +14,7 @@ service BrokerService {
 message AppointmentRequest {
   string topic_name = 1;
   int32 partition_id = 2;
-  repeated BrokerInfo replica_brokers = 3;
+  repeated BrokerInfoProto replica_brokers = 3;
 }
 
 // The broker should reject the appointment if it received ReplicateRequest within a timeout

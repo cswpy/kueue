@@ -12,6 +12,7 @@ import (
 	"maps"
 
 	"github.com/sirupsen/logrus"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -64,12 +65,11 @@ func (c *Controller) RegisterBroker(ctx context.Context, req *proto.RegisterBrok
 // GetTopic creates a new topic and assigns partitions to brokers if not exists, and return the partition metadata to producer
 func (c *Controller) GetTopic(ctx context.Context, req *proto.ProducerTopicRequest) (*proto.ProducerTopicResponse, error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 
 	// Return the partition metadata if the topic already exists
 	if _, exists := c.Metadata.TopicInfos[req.TopicName]; exists {
 		partitionInfoArr := c.Metadata.getPartitions(req.TopicName)
-		var arr []*proto.PartitionMetadata
+		var arr []*proto.PartitionInfo
 		for _, partition := range partitionInfoArr {
 			arr = append(arr, partition.getProto())
 		}
@@ -91,20 +91,79 @@ func (c *Controller) GetTopic(ctx context.Context, req *proto.ProducerTopicReque
 
 	c.Metadata.createTopic(req.TopicName, int(*req.NumPartitions), int(*req.ReplicationFactor))
 
-	// TODO - select brokers for replicas
-	// Assign partitions to brokers, wrap around if needed
+	topicReplicaSets := make(map[int][]BrokerInfo)
+
+	// Assign partitions and replicas to brokers, wrap around if needed
+	// Need to appoint a broker as leader first, before committing on the metadata changes
 	for idx := 0; idx < int(*req.NumPartitions); idx++ {
-		c.Metadata.assignTopicPartitionToBroker(req.TopicName, idx, brokerIDs[idx%len(brokerIDs)])
+		replicaSet, actual_factor := c.
+			selectReplicas(brokerIDs, brokerIDs[idx%len(brokerIDs)], int(*req.ReplicationFactor))
+
+		if actual_factor != int(*req.ReplicationFactor) {
+			c.logger.Warnf("Replication factor for topic %d partition %d is reduced from %d to %d", req.TopicName, idx, *req.ReplicationFactor, actual_factor)
+		}
+
+		topicReplicaSets[idx] = replicaSet
 	}
 
+	c.mu.Unlock()
+
+	// Abort and return error if any leader is failed to be appointed
+	g, ctx := errgroup.WithContext(ctx)
+
+	for idx, replicaSet := range topicReplicaSets {
+		leader := replicaSet[0]
+		g.Go(func() error {
+			client, err := c.clientPool.GetClient(&leader)
+			if err != nil {
+				return err
+			}
+			var replicaProtos []*proto.BrokerInfoProto
+
+			for _, replica := range replicaSet {
+				replicaProtos = append(replicaProtos, replica.getProto())
+			}
+
+			_, err = client.AppointAsLeader(ctx, &proto.AppointmentRequest{
+				TopicName:      req.TopicName,
+				PartitionId:    int32(idx),
+				ReplicaBrokers: replicaProtos,
+			})
+			return err
+		})
+
+	}
+
+	// If any leader appointment fails, return an error
+	if err := g.Wait(); err != nil {
+		c.logger.WithField("Topic", DController).Errorf(err.Error())
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+
+	// Got appointment confirmation, then we update the metadata
+	c.mu.Lock()
+	for idx, replicaSet := range topicReplicaSets {
+
+		// Get the broker names in the replica set, since the broker address may have changed
+		// Though we assume the healthy nodes are still healthy
+		var brokerNames []string
+		for _, broker := range replicaSet {
+			brokerNames = append(brokerNames, broker.BrokerName)
+		}
+		c.Metadata.assignPartitionReplica(req.TopicName, idx, brokerNames)
+
+	}
 	c.logger.Infof("Topic %s with %d partitions created.", req.TopicName, *req.NumPartitions)
 
 	partitionsArr := c.Metadata.getPartitions(req.TopicName)
 
-	var protoArr []*proto.PartitionMetadata
+	var protoArr []*proto.PartitionInfo
 
 	for _, partition := range partitionsArr {
-		protoArr = append(protoArr, partition.getProto())
+		par := partition.getProto()
+		// Remove replica info because the producer does not need it
+		par.Replicas = make([]*proto.BrokerInfoProto, 0)
+		protoArr = append(protoArr, par)
 	}
 
 	resp := &proto.ProducerTopicResponse{
@@ -164,10 +223,10 @@ func (c *Controller) Subscribe(ctx context.Context, req *proto.SubscribeRequest)
 	var assignedPartition *PartitionInfo
 	// Only assign partitions to brokers that are not already assigned
 	for _, partition := range partitionsArr {
-		if contains(partition.AssignedConsumers, req.ConsumerId) {
+		if _, ok := partition.AssignedConsumers[req.ConsumerId]; ok {
 			continue
 		} else {
-			partition.AssignedConsumers = append(partition.AssignedConsumers, req.ConsumerId)
+			partition.AssignedConsumers[req.ConsumerId] = struct{}{}
 			assignedPartition = partition
 			break
 		}
@@ -178,7 +237,7 @@ func (c *Controller) Subscribe(ctx context.Context, req *proto.SubscribeRequest)
 		c.logger.WithField("Topic", DController).Errorf(err.Error())
 		return nil, status.Error(codes.FailedPrecondition, err.Error())
 	}
-
+	// Consumer gets the partition info, including the leader and replica brokers
 	resp := &proto.SubscribeResponse{
 		TopicName: topicName,
 		Partition: assignedPartition.getProto(),
@@ -191,13 +250,26 @@ func (c *Controller) getActiveBrokerIDs() []string {
 	return slices.Collect(maps.Keys(c.BrokerStatus))
 }
 
-// selectReplicas selects brokers for replicas, ensuring the leader is included.
-func (c *Controller) selectReplicas(brokerIDs []string, leader string, replicationFactor int) []string {
-	replicas := []string{leader} // Leader is always the first replica
-	for _, brokerID := range brokerIDs {
-		if brokerID != leader && len(replicas) < replicationFactor {
-			replicas = append(replicas, brokerID)
+// selectReplicas selects brokers for replicas, but it may not respect the replication factor
+// if there are not enough brokers available, since storing two copies of a partition in memory at
+// the same broker is not useful.
+func (c *Controller) selectReplicas(brokerIDs []string, leader string, replicationFactor int) ([]BrokerInfo, int) {
+	replicas := make(map[string]int)
+	count := 1
+	for idx := 0; idx < len(brokerIDs) && count < replicationFactor; idx++ {
+		brokerID := brokerIDs[idx]
+		if brokerID != leader && replicas[brokerID] == 0 {
+			replicas[brokerID] = 1
+			count++
 		}
 	}
-	return replicas
+
+	// Query the BrokerInfos with selected brokerIDs
+	var replicaSet []BrokerInfo
+	replicaSet = append(replicaSet, *c.Metadata.BrokerInfos[leader])
+
+	for replica := range replicas {
+		replicaSet = append(replicaSet, *c.Metadata.BrokerInfos[replica])
+	}
+	return replicaSet, count
 }
