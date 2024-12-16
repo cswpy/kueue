@@ -68,11 +68,13 @@ func NewMockBroker(logger logrus.Entry, brokerName string, persistBatch int) *Br
 	}
 
 	broker := &Broker{
-		BrokerInfo:     brokerInfo,
-		logger:         logger,
-		persister:      Persister{BaseDir: brokerName, NumMessagePerBatch: persistBatch},
-		data:           NewConcurrentMap[string, []*proto.ConsumerMessage](MAP_SHARD_SIZE),
-		consumerOffset: make(map[string]int32),
+		BrokerInfo:        brokerInfo,
+		data:              NewConcurrentMap[string, []*proto.ConsumerMessage](MAP_SHARD_SIZE),
+		consumerOffset:    make(map[string]int32),
+		WaitForReplicaACK: false,
+		ReplicaInfo:       make(map[string][]*BrokerInfo),
+		persister:         Persister{BaseDir: brokerName, NumMessagePerBatch: persistBatch},
+		logger:            logger,
 	}
 
 	// Load persisted offsets and messages
@@ -93,7 +95,7 @@ func NewMockBroker(logger logrus.Entry, brokerName string, persistBatch int) *Br
 	return broker
 }
 
-func NewBroker(info *BrokerInfo, controllerAddr string, logger logrus.Entry) (*Broker, error) {
+func NewBroker(info *BrokerInfo, controllerAddr string, persistBatch int, logger logrus.Entry) (*Broker, error) {
 	var opts []grpc.DialOption
 	opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 
@@ -122,13 +124,16 @@ func NewBroker(info *BrokerInfo, controllerAddr string, logger logrus.Entry) (*B
 	}
 
 	broker := &Broker{
-		BrokerInfo:     info,
-		ControllerAddr: controllerAddr,
-		client:         client,
-		logger:         logger,
-		data:           NewConcurrentMap[string, []*proto.ConsumerMessage](MAP_SHARD_SIZE),
-		consumerOffset: make(map[string]int32),
-		clientPool:     MakeClientPool(),
+		BrokerInfo:        info,
+		ControllerAddr:    controllerAddr,
+		client:            client,
+		clientPool:        MakeClientPool(),
+		WaitForReplicaACK: true,
+		ReplicaInfo:       make(map[string][]*BrokerInfo),
+		data:              NewConcurrentMap[string, []*proto.ConsumerMessage](MAP_SHARD_SIZE),
+		consumerOffset:    make(map[string]int32),
+		persister:         Persister{BaseDir: info.BrokerName, NumMessagePerBatch: persistBatch},
+		logger:            logger,
 	}
 
 	// Load persisted offsets and messages

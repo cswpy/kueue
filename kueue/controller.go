@@ -100,7 +100,7 @@ func (c *Controller) GetTopic(ctx context.Context, req *proto.ProducerTopicReque
 			selectReplicas(brokerIDs, brokerIDs[idx%len(brokerIDs)], int(*req.ReplicationFactor))
 
 		if actual_factor != int(*req.ReplicationFactor) {
-			c.logger.Warnf("Replication factor for topic %d partition %d is reduced from %d to %d", req.TopicName, idx, *req.ReplicationFactor, actual_factor)
+			c.logger.Warnf("Replication factor for topic %s partition %d is reduced from %d to %d", req.TopicName, idx, *req.ReplicationFactor, actual_factor)
 		}
 
 		topicReplicaSets[idx] = replicaSet

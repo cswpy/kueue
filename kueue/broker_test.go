@@ -94,6 +94,21 @@ func TestBrokerProduceConsume(t *testing.T) {
 		Messages:    msgs,
 	}
 
+	apptRequest := proto.AppointmentRequest{
+		TopicName:   "topic1",
+		PartitionId: 0,
+	}
+
+	// Producing to a broker that is not leader should fail
+	_, err := b.Produce(context.Background(), &produceRequest)
+	assert.Error(t, err)
+
+	// Appoint broker as leader
+	resp2, err := b.AppointAsLeader(context.Background(), &apptRequest)
+	assert.NoError(t, err)
+	assert.True(t, resp2.LeaderAppointed)
+
+	// Now produce should succeed
 	resp1, err := b.Produce(context.Background(), &produceRequest)
 	assert.NoError(t, err)
 	assert.EqualValues(t, resp1.BaseOffset, 0)
@@ -104,12 +119,12 @@ func TestBrokerProduceConsume(t *testing.T) {
 		ConsumerId:  "consumer1",
 	}
 
-	resp2, err := b.Consume(context.Background(), &consumeRequest)
+	resp3, err := b.Consume(context.Background(), &consumeRequest)
 	assert.NoError(t, err)
-	assert.Equal(t, resp2.TopicName, "topic1")
-	assert.Len(t, resp2.Records, len(msgs))
-	checkMessageContent(t, msgs, resp2.Records)
-	checkMessageMetadata(t, resp2.Records, int(resp1.BaseOffset))
+	assert.Equal(t, resp3.TopicName, "topic1")
+	assert.Len(t, resp3.Records, len(msgs))
+	checkMessageContent(t, msgs, resp3.Records)
+	checkMessageMetadata(t, resp3.Records, int(resp1.BaseOffset))
 
 	// Cleanup
 	err = os.RemoveAll(b.BrokerInfo.BrokerName)
@@ -128,6 +143,13 @@ func TestBrokerConsumeEmptyPartition(t *testing.T) {
 		ProducerId:  "producer1",
 		PartitionId: 0,
 	}
+
+	apptRequest := proto.AppointmentRequest{
+		TopicName:   "topic1",
+		PartitionId: 0,
+	}
+
+	b.AppointAsLeader(context.Background(), &apptRequest)
 
 	b.Produce(context.Background(), &produceRequest)
 
@@ -172,6 +194,16 @@ func TestBrokerMPSC(t *testing.T) {
 	numBatch := numMessagePerProducer / numMessagePerRequest
 	brokerName := "BK1"
 	b := NewMockBroker(*logrus.WithField("test", "broker"), brokerName, persistBatch)
+
+	apptRequest := proto.AppointmentRequest{
+		TopicName:   "topic1",
+		PartitionId: 0,
+	}
+
+	_, err := b.AppointAsLeader(context.Background(), &apptRequest)
+
+	assert.NoError(t, err)
+
 	msgs := generateMessages(numProducer * numMessagePerProducer)
 
 	var wg sync.WaitGroup
@@ -213,7 +245,6 @@ func TestBrokerMPSC(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	var resp1 *proto.ConsumeResponse
-	var err error
 	var arr []*proto.ConsumerMessage
 
 	select {
@@ -240,17 +271,16 @@ func TestBrokerMPSC(t *testing.T) {
 }
 
 func TestBrokerProducePersist(t *testing.T) {
-	// b := Broker{
-	//     logger: *logrus.WithField("test", "broker"),
-	//     Data:   xsync.NewMap(),
-	//     BrokerInfo: &BrokerInfo{
-	//         BrokerName:   "BK1",
-	//         PersistBatch: 2,
-	//     },
-	// }
 	persistBatch := 2
 	brokerName := "BK1"
 	b := NewMockBroker(*logrus.WithField("test", "broker"), brokerName, persistBatch)
+
+	apptRequest := proto.AppointmentRequest{
+		TopicName:   "topic1",
+		PartitionId: 0,
+	}
+
+	b.AppointAsLeader(context.Background(), &apptRequest)
 
 	msgs := []*proto.ProducerMessage{
 		{Key: "key1", Value: "value1"},
@@ -324,6 +354,12 @@ func TestBrokerConcurrentProduce(t *testing.T) {
 	persistBatch := 2
 	brokerName := "BK1"
 	b := NewMockBroker(*logrus.WithField("test", "broker"), brokerName, persistBatch)
+
+	apptRequest := proto.AppointmentRequest{
+		TopicName:   "topic1",
+		PartitionId: 0,
+	}
+	b.AppointAsLeader(context.Background(), &apptRequest)
 
 	msgs := []*proto.ProducerMessage{
 		{Key: "key1", Value: "value1"},
