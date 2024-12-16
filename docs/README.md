@@ -8,13 +8,16 @@ sequenceDiagram
     participant C as Controller
     P->>C: Create a new topic
     C->>C: Assign partitions to broker
-    C->>P: Return all partition broker info
     create participant B1 as Broker 1
-    P->>B1: Select a broker to produce message
+    C->>B1: Appoint B1 as partition leader
+    B1->>C: Appointment accepted
+    C->>P: Return all partition leader info
+    P->>B1: Write to the leader of a selected partition
     B1->>B1: Persist
-    B1->>P: ACK
     create participant B2 as Broker 2
-    B1->>B2: Replicate message
+    B1->>B2: Replicate message to memory
+    B2->>B1: Success
+    B1->>P: ACK
     destroy B2
 ```
 
@@ -26,10 +29,9 @@ sequenceDiagram
     participant C as Consumer
     C->>CTRL: Subscribe to a new topic
     CTRL->>CTRL: Assign a partition to the consumer
-    CTRL->>C: Return broker info and partition ID
+    CTRL->>C: Return partition, leader, and replica brokers
     create participant B1 as Broker 1
     C->>B1: Consume messages from partition ID
     B1->>B1: Persists consumer offset
     B1->>C: Return messages
-    C->>B1: ACK/Commit?
 ```
