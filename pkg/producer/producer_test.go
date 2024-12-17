@@ -61,12 +61,11 @@ func startBroker(t *testing.T, brokerName string, controllerAddr string, persist
 	loggerEntry := NewLoggerEntry(logger, brokerName)
 
 	bi := &kueue.BrokerInfo{
-		BrokerName:   brokerName,
-		NodeAddr:     lis.Addr().String(),
-		PersistBatch: persistBatch,
+		BrokerName: brokerName,
+		NodeAddr:   lis.Addr().String(),
 	}
 
-	broker, err := kueue.NewBroker(bi, controllerAddr, *loggerEntry)
+	broker, err := kueue.NewBroker(bi, controllerAddr, persistBatch, *loggerEntry)
 	if err != nil {
 		t.Fatalf("Failed to create broker: %v", err)
 	}

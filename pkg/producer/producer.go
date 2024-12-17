@@ -147,7 +147,7 @@ func (p *Producer) Produce(ctx context.Context, topic string, producerID string,
 	// Send requests to each partition's leader broker
 	for partID, msgs := range partitionBatches {
 		partitionMeta := metadata.Partitions[partID]
-		leaderAddr := partitionMeta.LeaderAddress
+		leaderAddr := partitionMeta.Leader.Addr
 		if leaderAddr == "" {
 			return fmt.Errorf("no leader found for partition %d", partitionMeta.PartitionId)
 		}

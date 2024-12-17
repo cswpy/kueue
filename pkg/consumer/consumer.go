@@ -95,7 +95,14 @@ func (c *Consumer) Subscribe(ctx context.Context, topic string) error {
 	if _, exists := c.partitionLeaders[topic]; !exists {
 		c.partitionLeaders[topic] = make(map[int32]string)
 	}
-	c.partitionLeaders[topic][partition.PartitionId] = partition.LeaderAddress
+
+	if partition.Leader == nil {
+		return fmt.Errorf("partition %d for topic %s has nil leader info", partition.PartitionId, topic)
+	}
+	if partition.Leader.Addr == "" {
+		return fmt.Errorf("partition %d for topic %s has empty leader address", partition.PartitionId, topic)
+	}
+	c.partitionLeaders[topic][partition.PartitionId] = partition.Leader.Addr
 
 	return nil
 }
