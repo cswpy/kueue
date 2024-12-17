@@ -115,75 +115,76 @@ func (p *Persister) readMessagesFromFile(filePath string) ([]*proto.ConsumerMess
 }
 
 func (p *Persister) persistData(topicPartitionId string, msgs ...*proto.ConsumerMessage) error {
-	if len(msgs) == 0 {
-		return nil
-	}
+    if len(msgs) == 0 {
+        return nil
+    }
 
-	p.mu.Lock()
-	defer p.mu.Unlock()
+    p.mu.Lock()
+    defer p.mu.Unlock()
 
-	dirPath := filepath.Join(p.BaseDir, topicPartitionId)
-	err := os.MkdirAll(dirPath, 0755)
-	if err != nil {
-		return err
-	}
+    dirPath := filepath.Join(p.BaseDir, topicPartitionId)
+    err := os.MkdirAll(dirPath, 0755)
+    if err != nil {
+        return err
+    }
 
-	var currentFile *os.File
-	var currentFileIndex int
-	var offset = int(msgs[0].Offset)
+    var currentFile *os.File
+    // var currentFileIndex int
+    offset := int(msgs[0].Offset)
+    baseIndex := (offset / p.NumMessagePerBatch) * p.NumMessagePerBatch
+    fileName := fmt.Sprintf("%010d.bin", baseIndex)
+    filePath := filepath.Join(dirPath, fileName)
+    currentFile, err = os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+    if err != nil {
+        return err
+    }
+    defer currentFile.Close()
 
-	defer func() {
-		if currentFile != nil {
-			currentFile.Close()
-		}
-	}()
+    for _, msg := range msgs {
+        // If we've hit a new batch boundary
+        if msg.Offset != int32(offset) {
+            // This would be unusual, but check logic if needed
+        }
 
-	for _, msg := range msgs {
-		if offset%p.NumMessagePerBatch == 0 {
-			// Close the current file if open
-			if currentFile != nil {
-				currentFile.Close()
-			}
+        // If offset hits multiple of batch size, rotate
+        if offset != baseIndex && offset%p.NumMessagePerBatch == 0 {
+            currentFile.Sync()
+            currentFile.Close()
 
-			// Determine the new file index and path
-			currentFileIndex = (offset / p.NumMessagePerBatch) * p.NumMessagePerBatch
-			fileName := fmt.Sprintf("%010d.bin", currentFileIndex)
-			filePath := filepath.Join(dirPath, fileName)
+            baseIndex = (offset / p.NumMessagePerBatch) * p.NumMessagePerBatch
+            fileName = fmt.Sprintf("%010d.bin", baseIndex)
+            filePath = filepath.Join(dirPath, fileName)
+            currentFile, err = os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+            if err != nil {
+                return err
+            }
+        }
 
-			// Open or create the new file
-			currentFile, err = os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-			if err != nil {
-				return err
-			}
-		}
+        dataBytes, err := proto1.Marshal(msg)
+        if err != nil {
+            return err
+        }
 
-		// Serialize the message
-		dataBytes, err := proto1.Marshal(msg)
-		if err != nil {
-			return err
-		}
+        length := uint32(len(dataBytes))
+        if err := binary.Write(currentFile, binary.LittleEndian, length); err != nil {
+            return err
+        }
+        if _, err := currentFile.Write(dataBytes); err != nil {
+            return err
+        }
 
-		// Write the length and data to the file
-		length := uint32(len(dataBytes))
-		if err := binary.Write(currentFile, binary.LittleEndian, length); err != nil {
-			return err
-		}
-		if _, err := currentFile.Write(dataBytes); err != nil {
-			return err
-		}
+        offset++
+    }
 
-		offset++
-	}
+    if currentFile != nil {
+        if err := currentFile.Sync(); err != nil {
+            return err
+        }
+    }
 
-	// Sync the last file if still open
-	if currentFile != nil {
-		if err := currentFile.Sync(); err != nil {
-			return err
-		}
-	}
-
-	return nil
+    return nil
 }
+
 
 func (p *Persister) persistConsumerOffset(topicPartitionId, consumerId string, offset int32) error {
 	p.mu.Lock()

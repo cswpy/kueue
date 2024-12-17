@@ -488,8 +488,20 @@ func TestBrokerConsumePersistOffset(t *testing.T) {
 		Messages:    msgs,
 	}
 
-	_, err := b.Produce(context.Background(), &produceRequest)
-	assert.NoError(t, err, "Produce should succeed")
+	apptRequest := proto.AppointmentRequest{
+		TopicName:   "topic1",
+		PartitionId: 0,
+	}
+
+	// Appoint broker as leader
+	resp2, err := b.AppointAsLeader(context.Background(), &apptRequest)
+	assert.NoError(t, err)
+	assert.True(t, resp2.LeaderAppointed)
+
+	// Now produce should succeed
+	resp1, err := b.Produce(context.Background(), &produceRequest)
+	assert.NoError(t, err)
+	assert.EqualValues(t, resp1.BaseOffset, 0)
 
 	// Consume all messages in one go
 	consumeRequest := proto.ConsumeRequest{
@@ -553,8 +565,22 @@ func TestOffsetPersist_ConsumeAllAtOnce(t *testing.T) {
 		Messages:    msgs,
 	}
 
-	_, err := b.Produce(context.Background(), &produceRequest)
+	apptRequest := proto.AppointmentRequest{
+		TopicName:   "topic1",
+		PartitionId: 0,
+	}
+
+	// Appoint broker as leader
+	resp2, err := b.AppointAsLeader(context.Background(), &apptRequest)
 	assert.NoError(t, err)
+	assert.True(t, resp2.LeaderAppointed)
+
+	// Now produce should succeed
+	resp1, err := b.Produce(context.Background(), &produceRequest)
+	assert.NoError(t, err)
+	assert.EqualValues(t, resp1.BaseOffset, 0)
+
+	
 
 	consumeRequest := proto.ConsumeRequest{
 		TopicName:   topicName,
@@ -598,8 +624,24 @@ func TestOffsetPersist_MultipleConsumes(t *testing.T) {
 		Messages:    msgs,
 	}
 
+	apptRequest := proto.AppointmentRequest{
+		TopicName:   "topic1",
+		PartitionId: 0,
+	}
+
+	// Producing to a broker that is not leader should fail
 	_, err := b.Produce(context.Background(), &produceRequest)
+	assert.Error(t, err)
+
+	// Appoint broker as leader
+	resp2, err := b.AppointAsLeader(context.Background(), &apptRequest)
 	assert.NoError(t, err)
+	assert.True(t, resp2.LeaderAppointed)
+
+	// Now produce should succeed
+	resp1, err := b.Produce(context.Background(), &produceRequest)
+	assert.NoError(t, err)
+	assert.EqualValues(t, resp1.BaseOffset, 0)
 
 	consumeRequest := proto.ConsumeRequest{
 		TopicName:   topicName,
@@ -649,8 +691,20 @@ func TestOffsetPersist_MultipleConsumers(t *testing.T) {
 		Messages:    msgs,
 	}
 
-	_, err := b.Produce(context.Background(), &produceRequest)
+	apptRequest := proto.AppointmentRequest{
+		TopicName:   "topic1",
+		PartitionId: 0,
+	}
+
+	// Appoint broker as leader
+	resp2, err := b.AppointAsLeader(context.Background(), &apptRequest)
 	assert.NoError(t, err)
+	assert.True(t, resp2.LeaderAppointed)
+
+	// Now produce should succeed
+	resp1, err := b.Produce(context.Background(), &produceRequest)
+	assert.NoError(t, err)
+	assert.EqualValues(t, resp1.BaseOffset, 0)
 
 	// consumerA consumes all messages
 	resp, err := b.Consume(context.Background(), &proto.ConsumeRequest{
@@ -702,8 +756,20 @@ func TestOffsetPersist_ConcurrentConsume(t *testing.T) {
 		Messages:    msgs,
 	}
 
-	_, err := b.Produce(context.Background(), &produceRequest)
-	assert.NoError(t, err, "Produce should succeed")
+	apptRequest := proto.AppointmentRequest{
+		TopicName:   "topic1",
+		PartitionId: 0,
+	}
+
+	// Appoint broker as leader
+	resp2, err := b.AppointAsLeader(context.Background(), &apptRequest)
+	assert.NoError(t, err)
+	assert.True(t, resp2.LeaderAppointed)
+
+	// Now produce should succeed
+	resp1, err := b.Produce(context.Background(), &produceRequest)
+	assert.NoError(t, err)
+	assert.EqualValues(t, resp1.BaseOffset, 0)
 
 	// Number of concurrent consumers
 	numConsumers := 5
@@ -747,9 +813,6 @@ func TestOffsetPersist_ConcurrentConsume(t *testing.T) {
 
 	wg.Wait()
 
-	// By now all consumers should have reached the end
-	// Each consumer's offset file should have been correctly persisted
-	// The assertions inside the consumeUntilDone function check correctness.
 }
 
 func TestBrokerRecovery(t *testing.T) {
@@ -781,8 +844,20 @@ func TestBrokerRecovery(t *testing.T) {
 		Messages:    msgs,
 	}
 
-	_, err := b.Produce(context.Background(), &produceRequest)
+	apptRequest := proto.AppointmentRequest{
+		TopicName:   "topic1",
+		PartitionId: 0,
+	}
+
+	// Appoint broker as leader
+	resp2, err := b.AppointAsLeader(context.Background(), &apptRequest)
 	assert.NoError(t, err)
+	assert.True(t, resp2.LeaderAppointed)
+
+	// Now produce should succeed
+	resp1, err := b.Produce(context.Background(), &produceRequest)
+	assert.NoError(t, err)
+	assert.EqualValues(t, resp1.BaseOffset, 0)
 
 	// Simulate broker shutdown by setting b to nil
 	b = nil
@@ -825,7 +900,7 @@ func TestBrokerInitialization_LoadPersistedMessages(t *testing.T) {
 		{Key: "key4", Value: "value4"},
 	}
 
-	topicName := "test_topic"
+	topicName := "topic1"
 	partitionId := int32(0)
 	produceRequest := proto.ProduceRequest{
 		TopicName:   topicName,
@@ -834,8 +909,20 @@ func TestBrokerInitialization_LoadPersistedMessages(t *testing.T) {
 		Messages:    msgs,
 	}
 
-	_, err := b.Produce(context.Background(), &produceRequest)
+	apptRequest := proto.AppointmentRequest{
+		TopicName:   "topic1",
+		PartitionId: 0,
+	}
+
+	// Appoint broker as leader
+	resp2, err := b.AppointAsLeader(context.Background(), &apptRequest)
 	assert.NoError(t, err)
+	assert.True(t, resp2.LeaderAppointed)
+
+	// Now produce should succeed
+	resp1, err := b.Produce(context.Background(), &produceRequest)
+	assert.NoError(t, err)
+	assert.EqualValues(t, resp1.BaseOffset, 0)
 
 	// Step 2: Verify messages are persisted correctly
 	// (Optional) You can check the files on disk if needed
@@ -880,7 +967,7 @@ func TestBrokerInitialization_NoMessagesConsumed(t *testing.T) {
 		{Key: "key4", Value: "value4"},
 	}
 
-	topicName := "test_topic"
+	topicName := "topic1"
 	partitionId := int32(0)
 	consumerId := "consumer1"
 
@@ -891,8 +978,21 @@ func TestBrokerInitialization_NoMessagesConsumed(t *testing.T) {
 		Messages:    msgs,
 	}
 
-	_, err := b.Produce(context.Background(), &produceRequest)
+	apptRequest := proto.AppointmentRequest{
+		TopicName:   "topic1",
+		PartitionId: 0,
+	}
+
+
+	// Appoint broker as leader
+	resp2, err := b.AppointAsLeader(context.Background(), &apptRequest)
 	assert.NoError(t, err)
+	assert.True(t, resp2.LeaderAppointed)
+
+	// Now produce should succeed
+	resp1, err := b.Produce(context.Background(), &produceRequest)
+	assert.NoError(t, err)
+	assert.EqualValues(t, resp1.BaseOffset, 0)
 
 	// Step 2: Simulate broker shutdown
 	b = nil
@@ -923,7 +1023,7 @@ func TestBrokerInitialization_AllMessagesConsumed(t *testing.T) {
 		{Key: "key4", Value: "value4"},
 	}
 
-	topicName := "test_topic"
+	topicName := "topic1"
 	partitionId := int32(0)
 	consumerId := "consumer1"
 
@@ -934,8 +1034,20 @@ func TestBrokerInitialization_AllMessagesConsumed(t *testing.T) {
 		Messages:    msgs,
 	}
 
-	_, err := b.Produce(context.Background(), &produceRequest)
+	apptRequest := proto.AppointmentRequest{
+		TopicName:   "topic1",
+		PartitionId: 0,
+	}
+
+	// Appoint broker as leader
+	resp2, err := b.AppointAsLeader(context.Background(), &apptRequest)
 	assert.NoError(t, err)
+	assert.True(t, resp2.LeaderAppointed)
+
+	// Now produce should succeed
+	resp1, err := b.Produce(context.Background(), &produceRequest)
+	assert.NoError(t, err)
+	assert.EqualValues(t, resp1.BaseOffset, 0)
 
 	// Step 2: Consume all messages
 	consumeRequest := proto.ConsumeRequest{
