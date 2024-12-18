@@ -80,6 +80,66 @@ func checkMessageMetadata(t *testing.T, msgs []*proto.ConsumerMessage, baseOffse
 	}
 }
 
+// Function to verify messages persisted to disk
+func verifyMessagesPersistedToDisk(t *testing.T, brokerName, topicName string, partitionId int32, expectedMsgs []*proto.ConsumerMessage) {
+    dirPath := filepath.Join(brokerName, fmt.Sprintf("%s-%d", topicName, partitionId))
+    files, err := os.ReadDir(dirPath)
+    assert.NoError(t, err, "Failed to read directory for persisted messages")
+    assert.NotEmpty(t, files, "Expected some files to be created for persisted messages")
+
+    var allMessages []*proto.ConsumerMessage
+
+    for _, fileEntry := range files {
+        filePath := filepath.Join(dirPath, fileEntry.Name())
+        f, err := os.Open(filePath)
+        assert.NoError(t, err)
+        defer f.Close()
+
+        for {
+            var length uint32
+            err := binary.Read(f, binary.LittleEndian, &length)
+            if err == io.EOF {
+                break
+            }
+            assert.NoError(t, err, "Failed to read message length")
+
+            data := make([]byte, length)
+            _, err = f.Read(data)
+            assert.NoError(t, err, "Failed to read message data")
+
+            // Unmarshal the data into a ConsumerMessage
+            msg := &proto.ConsumerMessage{}
+            err = proto1.Unmarshal(data, msg)
+            assert.NoError(t, err, "Failed to unmarshal message")
+
+            allMessages = append(allMessages, msg)
+        }
+    }
+
+    // Ensure all messages were read
+    assert.Equal(t, len(expectedMsgs), len(allMessages), "Not all messages were read from disk")
+
+    // Verify the content of the messages
+    for i, msg := range expectedMsgs {
+        assert.Equal(t, msg.Key, allMessages[i].Key, "Message keys should match")
+        assert.Equal(t, msg.Value, allMessages[i].Value, "Message values should match")
+    }
+}
+
+
+
+func convertToConsumerMessages(producerMessages []*proto.ProducerMessage) []*proto.ConsumerMessage {
+    consumerMessages := make([]*proto.ConsumerMessage, len(producerMessages))
+    for i, pm := range producerMessages {
+        consumerMessages[i] = &proto.ConsumerMessage{
+            Key:   pm.Key,
+            Value: pm.Value,
+            // Set other fields as necessary, e.g., Offset, Timestamp
+        }
+    }
+    return consumerMessages
+}
+
 func TestBrokerProduceConsume(t *testing.T) {
 	persistBatch := 2
 	brokerName := "BK1"
@@ -1090,4 +1150,93 @@ func TestBrokerInitialization_AllMessagesConsumed(t *testing.T) {
 	// Offset should remain the same
 	finalOffset := readOffsetFile(t, brokerName, topicName, partitionId, consumerId)
 	assert.EqualValues(t, len(msgs), finalOffset, "Final offset should still be the same after consuming all messages")
+}
+
+
+func TestReplication(t *testing.T) {
+    persistBatch := 2
+    logger := logrus.New()
+    logger.SetLevel(logrus.DebugLevel)
+    logger.SetOutput(os.Stdout)
+    entry := logrus.NewEntry(logger)
+
+    // Create a leader broker and a replica broker in-memory
+    leader := NewMockBroker(*entry, "leader", persistBatch)
+    replica := NewMockBroker(*entry, "replica", persistBatch)
+
+    defer func() {
+        _ = os.RemoveAll("leader")
+        _ = os.RemoveAll("replica")
+    }()
+
+    // Configure the leader to replicate to the replica for a given topic-partition
+    topicName := "topic1"
+    partitionId := int32(0)
+    topicPartitionID := fmt.Sprintf("%s-%d", topicName, partitionId)
+
+    msgs := []*proto.ProducerMessage{
+        {Key: "key1", Value: "value1"},
+        {Key: "key2", Value: "value2"},
+        {Key: "key3", Value: "value3"},
+        {Key: "key4", Value: "value4"},
+    }
+
+    BrokerInfoProtoReplica := &proto.BrokerInfoProto{
+        BrokerId: replica.BrokerInfo.BrokerName,
+        Addr:     replica.BrokerInfo.NodeAddr,
+    }
+
+    apptRequest := proto.AppointmentRequest{
+        TopicName:      topicName,
+        PartitionId:    partitionId,
+        ReplicaBrokers: []*proto.BrokerInfoProto{BrokerInfoProtoReplica},
+    }
+
+    produceRequest := proto.ProduceRequest{
+        TopicName:   topicName,
+        ProducerId:  "producer1",
+        PartitionId: partitionId,
+        Messages:    msgs,
+    }
+
+    // Appoint broker as leader
+    resp2, err := leader.AppointAsLeader(context.Background(), &apptRequest)
+    assert.NoError(t, err)
+    assert.True(t, resp2.LeaderAppointed)
+
+    // Now produce should succeed
+    resp1, err := leader.Produce(context.Background(), &produceRequest)
+    assert.NoError(t, err)
+    assert.EqualValues(t, resp1.BaseOffset, 0)
+
+    // Manually replicate messages to the replica
+	consumerMsgs := convertToConsumerMessages(msgs)
+    replicateRequest := &proto.ReplicateRequest{
+        TopicName:   topicName,
+        PartitionId: partitionId,
+        Messages:    consumerMsgs,
+    }
+
+    _, err = replica.ReplicateMessage(context.Background(), replicateRequest)
+    assert.NoError(t, err, "Failed to replicate messages to the replica")
+
+    // Retrieve the messages from the replica's data store
+    mapShard := replica.GetData().ShardForKey(topicPartitionID)
+    mapShard.RLock()
+    defer mapShard.RUnlock()
+    topicPartition := mapShard.Items[topicPartitionID]
+
+    // Assert that the replica has received all messages
+    assert.EqualValues(t, 4, len(topicPartition), "Replica should have received 4 messages")
+
+    // verify that the messages are correct
+    for i, msg := range msgs {
+        replicatedMsg := topicPartition[i]
+        assert.EqualValues(t, msg.Key, string(replicatedMsg.Key), "Message keys should match")
+        assert.EqualValues(t, msg.Value, string(replicatedMsg.Value), "Message values should match")
+    }
+
+	// Verify that the messages are persisted to disk
+	verifyMessagesPersistedToDisk(t, replica.BrokerInfo.BrokerName, topicName, partitionId, consumerMsgs)
+
 }

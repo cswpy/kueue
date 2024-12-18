@@ -52,6 +52,10 @@ type Broker struct {
 	logger logrus.Entry
 }
 
+func (b *Broker) GetData() *ConcurrentMap[string, []*proto.ConsumerMessage] {
+	return b.data
+}
+
 func (b *Broker) GetConsumerOffset(consumerID string, topicName string, partitionID int32) int32 {
 	topicPartitionID := fmt.Sprintf("%s-%d", topicName, partitionID)
 	offsetLookupKey := fmt.Sprintf("%s-%s", consumerID, topicPartitionID)
@@ -75,8 +79,10 @@ func NewMockBroker(logger logrus.Entry, brokerName string, persistBatch int) *Br
 		ReplicaInfo:       make(map[string][]*BrokerInfo),
 		persister:         Persister{BaseDir: brokerName, NumMessagePerBatch: persistBatch},
 		logger:            logger,
+		clientPool:     MakeClientPool(),// Initialize clientPool
 	}
 
+	
 	// Load persisted offsets and messages
 	if err := broker.persister.loadConsumerOffsets(broker.consumerOffset); os.IsNotExist(err) {
 		broker.logger.Infof("No consumer offsets found on storage, starting from scratch...")
@@ -257,6 +263,8 @@ func (b *Broker) Produce(ctx context.Context, req *proto.ProduceRequest) (*proto
 		for _, replica := range replicas {
 			g.Go(func() error {
 				client, err := b.clientPool.GetClient(replica)
+				b.logger.WithField("Topic", DBroker).Debugf("Replicating message to replica %s", replica.BrokerName)
+
 				if err != nil {
 					b.logger.WithField("Topic", DBroker).Errorf("Failed to get client for replica %s: %+v", replica.BrokerName, err)
 					return err
@@ -363,6 +371,8 @@ func (b *Broker) ReplicateMessage(ctx context.Context, req *proto.ReplicateReque
 
 	// Getting Offset from the last record in the partition
 	mapShard.Items[topicPartitionID] = append(mapShard.Items[topicPartitionID], req.Messages...)
+
+	b.persister.persistData(topicPartitionID, mapShard.Items[topicPartitionID]...)
 
 	return &proto.ReplicateResponse{}, nil
 }

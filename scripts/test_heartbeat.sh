@@ -13,8 +13,8 @@ sleep 1
 # Start the brokers with unique names and ports
 BROKER_DETAILS=(
     "BR1 127.0.0.1:8081"
-    # "BR2 127.0.0.1:8082"
-    # "BR3 127.0.0.1:8083"
+    "BR2 127.0.0.1:8082"
+    "BR3 127.0.0.1:8083"
 )
 
 PERSIST_BATCH=100

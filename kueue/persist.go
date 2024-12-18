@@ -142,8 +142,7 @@ func (p *Persister) persistData(topicPartitionId string, msgs ...*proto.Consumer
 
     for _, msg := range msgs {
         // If we've hit a new batch boundary
-        if msg.Offset != int32(offset) {
-            // This would be unusual, but check logic if needed
+        if msg.Offset != int32(offset) { // This would be unusual, but check logic if needed
         }
 
         // If offset hits multiple of batch size, rotate
