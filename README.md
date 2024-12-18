@@ -15,6 +15,11 @@ go run cmd/broker/broker.go --persist-batch="${PERSIST_BATCH}" --broker-name="${
 ```
 `--persist-batch` is the number of messages to persist in storage a single binary file. `--broker-name` should be a unique identifier of this broker in a cluster. `--broker-address` is where the broker process will run, and will be advertised to peers in the cluster. `--controller-address` is the address to connect to talk to the controller, which should match the address used to run the controller.
 
+To run all broker and controller and test heartbeat,
+```
+./scripts/test_heartbeat.sh
+```
+This will run all of them at the same time and peridically test heartbeat from each brokers
 ## Compiling protobuf
 
 Install all required dependencies by running `go mod tidy`, then run `Makefile` after updating the proto files.
