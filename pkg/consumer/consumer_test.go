@@ -129,21 +129,23 @@ func TestConsumerIntegration(t *testing.T) {
 
 	time.Sleep(300 * time.Millisecond)
 
-	// Create a consumer and subscribe to the topic
+	// Create a consumer and subscribe to all partitions of the topic
 	consumerID := "consumer-1"
 	consumerClient, err := NewConsumer(controllerAddr, consumerID)
 	if err != nil {
 		t.Fatalf("Failed to create consumer: %v", err)
 	}
 
-	err = consumerClient.Subscribe(ctx, topic)
-	if err != nil {
-		t.Fatalf("Failed to subscribe consumer to topic %s: %v", topic, err)
+	// Since the controller assigns one partition per Subscribe call,
+	// call Subscribe numPartitions times to get all partitions.
+	for i := 0; i < numPartitions; i++ {
+		err = consumerClient.Subscribe(ctx, topic)
+		if err != nil {
+			t.Fatalf("Failed to subscribe consumer to topic %s: %v", topic, err)
+		}
 	}
 
-	// In a real scenario, the consumer may be assigned multiple partitions.
-	// The consumer's Consume method will fetch from all assigned partitions.
-	// We'll collect all consumed messages in this slice to verify them.
+	// Now the consumer has all partitions assigned. Let's consume.
 	var consumedMessages []string
 	mu := &sync.Mutex{}
 
@@ -160,8 +162,6 @@ func TestConsumerIntegration(t *testing.T) {
 	}
 
 	// Verify that all produced messages were consumed
-	// Because of partitioning, not all messages may end up in one partition,
-	// but we should see all messages that were produced appear in the consumer output.
 	expectedSet := make(map[string]struct{})
 	for i, k := range keys {
 		msgStr := fmt.Sprintf("%s:%s", k, values[i])
@@ -181,12 +181,11 @@ func TestConsumerIntegration(t *testing.T) {
 	}
 
 	// Check that the data was persisted as expected
-	// Verify that we have some files created for the persisted data
 	for pID := 0; pID < numPartitions; pID++ {
 		dirPath := filepath.Join(brokerName, fmt.Sprintf("%s-%d", topic, pID))
 		entries, err := os.ReadDir(dirPath)
 		if err != nil {
-			// It's possible some partitions got no data if keys always hashed to the same partition
+			// It's possible no data for a particular partition if all keys hashed to another partition.
 			continue
 		}
 

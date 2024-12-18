@@ -77,6 +77,7 @@ func (c *Controller) GetTopic(ctx context.Context, req *proto.ProducerTopicReque
 			TopicName:  req.TopicName,
 			Partitions: arr,
 		}
+		c.mu.Unlock()
 		return resp, nil
 	}
 
@@ -142,6 +143,8 @@ func (c *Controller) GetTopic(ctx context.Context, req *proto.ProducerTopicReque
 
 	// Got appointment confirmation, then we update the metadata
 	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	for idx, replicaSet := range topicReplicaSets {
 
 		// Get the broker names in the replica set, since the broker address may have changed

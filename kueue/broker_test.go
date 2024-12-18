@@ -82,62 +82,60 @@ func checkMessageMetadata(t *testing.T, msgs []*proto.ConsumerMessage, baseOffse
 
 // Function to verify messages persisted to disk
 func verifyMessagesPersistedToDisk(t *testing.T, brokerName, topicName string, partitionId int32, expectedMsgs []*proto.ConsumerMessage) {
-    dirPath := filepath.Join(brokerName, fmt.Sprintf("%s-%d", topicName, partitionId))
-    files, err := os.ReadDir(dirPath)
-    assert.NoError(t, err, "Failed to read directory for persisted messages")
-    assert.NotEmpty(t, files, "Expected some files to be created for persisted messages")
+	dirPath := filepath.Join(brokerName, fmt.Sprintf("%s-%d", topicName, partitionId))
+	files, err := os.ReadDir(dirPath)
+	assert.NoError(t, err, "Failed to read directory for persisted messages")
+	assert.NotEmpty(t, files, "Expected some files to be created for persisted messages")
 
-    var allMessages []*proto.ConsumerMessage
+	var allMessages []*proto.ConsumerMessage
 
-    for _, fileEntry := range files {
-        filePath := filepath.Join(dirPath, fileEntry.Name())
-        f, err := os.Open(filePath)
-        assert.NoError(t, err)
-        defer f.Close()
+	for _, fileEntry := range files {
+		filePath := filepath.Join(dirPath, fileEntry.Name())
+		f, err := os.Open(filePath)
+		assert.NoError(t, err)
+		defer f.Close()
 
-        for {
-            var length uint32
-            err := binary.Read(f, binary.LittleEndian, &length)
-            if err == io.EOF {
-                break
-            }
-            assert.NoError(t, err, "Failed to read message length")
+		for {
+			var length uint32
+			err := binary.Read(f, binary.LittleEndian, &length)
+			if err == io.EOF {
+				break
+			}
+			assert.NoError(t, err, "Failed to read message length")
 
-            data := make([]byte, length)
-            _, err = f.Read(data)
-            assert.NoError(t, err, "Failed to read message data")
+			data := make([]byte, length)
+			_, err = f.Read(data)
+			assert.NoError(t, err, "Failed to read message data")
 
-            // Unmarshal the data into a ConsumerMessage
-            msg := &proto.ConsumerMessage{}
-            err = proto1.Unmarshal(data, msg)
-            assert.NoError(t, err, "Failed to unmarshal message")
+			// Unmarshal the data into a ConsumerMessage
+			msg := &proto.ConsumerMessage{}
+			err = proto1.Unmarshal(data, msg)
+			assert.NoError(t, err, "Failed to unmarshal message")
 
-            allMessages = append(allMessages, msg)
-        }
-    }
+			allMessages = append(allMessages, msg)
+		}
+	}
 
-    // Ensure all messages were read
-    assert.Equal(t, len(expectedMsgs), len(allMessages), "Not all messages were read from disk")
+	// Ensure all messages were read
+	assert.Equal(t, len(expectedMsgs), len(allMessages), "Not all messages were read from disk")
 
-    // Verify the content of the messages
-    for i, msg := range expectedMsgs {
-        assert.Equal(t, msg.Key, allMessages[i].Key, "Message keys should match")
-        assert.Equal(t, msg.Value, allMessages[i].Value, "Message values should match")
-    }
+	// Verify the content of the messages
+	for i, msg := range expectedMsgs {
+		assert.Equal(t, msg.Key, allMessages[i].Key, "Message keys should match")
+		assert.Equal(t, msg.Value, allMessages[i].Value, "Message values should match")
+	}
 }
 
-
-
 func convertToConsumerMessages(producerMessages []*proto.ProducerMessage) []*proto.ConsumerMessage {
-    consumerMessages := make([]*proto.ConsumerMessage, len(producerMessages))
-    for i, pm := range producerMessages {
-        consumerMessages[i] = &proto.ConsumerMessage{
-            Key:   pm.Key,
-            Value: pm.Value,
-            // Set other fields as necessary, e.g., Offset, Timestamp
-        }
-    }
-    return consumerMessages
+	consumerMessages := make([]*proto.ConsumerMessage, len(producerMessages))
+	for i, pm := range producerMessages {
+		consumerMessages[i] = &proto.ConsumerMessage{
+			Key:   pm.Key,
+			Value: pm.Value,
+			// Set other fields as necessary, e.g., Offset, Timestamp
+		}
+	}
+	return consumerMessages
 }
 
 func TestBrokerProduceConsume(t *testing.T) {
@@ -160,7 +158,7 @@ func TestBrokerProduceConsume(t *testing.T) {
 	}
 
 	// Producing to a broker that is not leader should fail
-	_, err := b.Produce(context.Background(), &produceRequest)
+	_, err := b.ProduceMessage(context.Background(), &produceRequest)
 	assert.Error(t, err)
 
 	// Appoint broker as leader
@@ -169,7 +167,7 @@ func TestBrokerProduceConsume(t *testing.T) {
 	assert.True(t, resp2.LeaderAppointed)
 
 	// Now produce should succeed
-	resp1, err := b.Produce(context.Background(), &produceRequest)
+	resp1, err := b.ProduceMessage(context.Background(), &produceRequest)
 	assert.NoError(t, err)
 	assert.EqualValues(t, resp1.BaseOffset, 0)
 
@@ -179,7 +177,7 @@ func TestBrokerProduceConsume(t *testing.T) {
 		ConsumerId:  "consumer1",
 	}
 
-	resp3, err := b.Consume(context.Background(), &consumeRequest)
+	resp3, err := b.ConsumeMessage(context.Background(), &consumeRequest)
 	assert.NoError(t, err)
 	assert.Equal(t, resp3.TopicName, "topic1")
 	assert.Len(t, resp3.Records, len(msgs))
@@ -211,7 +209,7 @@ func TestBrokerConsumeEmptyPartition(t *testing.T) {
 
 	b.AppointAsLeader(context.Background(), &apptRequest)
 
-	b.Produce(context.Background(), &produceRequest)
+	b.ProduceMessage(context.Background(), &produceRequest)
 
 	// Try consuming from an empty partition
 	consumeRequest := proto.ConsumeRequest{
@@ -220,20 +218,20 @@ func TestBrokerConsumeEmptyPartition(t *testing.T) {
 		ConsumerId:  "consumer1",
 	}
 
-	resp, err := b.Consume(context.Background(), &consumeRequest)
+	resp, err := b.ConsumeMessage(context.Background(), &consumeRequest)
 
 	assert.Error(t, err)
 	assert.Nil(t, resp)
 
 	produceRequest.Messages = msgs
-	b.Produce(context.Background(), &produceRequest)
+	b.ProduceMessage(context.Background(), &produceRequest)
 
-	resp, err = b.Consume(context.Background(), &consumeRequest)
+	resp, err = b.ConsumeMessage(context.Background(), &consumeRequest)
 	assert.NoError(t, err)
 	assert.Equal(t, resp.TopicName, "topic1")
 	checkMessageContent(t, msgs, resp.Records)
 
-	resp, err = b.Consume(context.Background(), &consumeRequest)
+	resp, err = b.ConsumeMessage(context.Background(), &consumeRequest)
 	assert.Equal(t, resp.TopicName, "topic1")
 	assert.Empty(t, resp.Records)
 	assert.NoError(t, err)
@@ -281,7 +279,7 @@ func TestBrokerMPSC(t *testing.T) {
 					PartitionId: 0,
 					Messages:    msgs[begin:end],
 				}
-				_, err := b.Produce(context.Background(), &produceRequest)
+				_, err := b.ProduceMessage(context.Background(), &produceRequest)
 				assert.NoError(t, err)
 			}
 			wg.Done()
@@ -309,7 +307,7 @@ func TestBrokerMPSC(t *testing.T) {
 
 	select {
 	case <-done:
-		resp1, err = b.Consume(context.Background(), &consumeRequest)
+		resp1, err = b.ConsumeMessage(context.Background(), &consumeRequest)
 		assert.NoError(t, err)
 		arr = append(arr, resp1.Records...)
 		// Cleanup
@@ -317,7 +315,7 @@ func TestBrokerMPSC(t *testing.T) {
 		assert.NoError(t, err)
 		return
 	default:
-		resp1, err = b.Consume(context.Background(), &consumeRequest)
+		resp1, err = b.ConsumeMessage(context.Background(), &consumeRequest)
 		assert.NoError(t, err)
 		arr = append(arr, resp1.Records...)
 		// Cleanup
@@ -358,7 +356,7 @@ func TestBrokerProducePersist(t *testing.T) {
 	}
 
 	// Call Produce
-	resp1, err := b.Produce(context.Background(), &produceRequest)
+	resp1, err := b.ProduceMessage(context.Background(), &produceRequest)
 	assert.NoError(t, err)
 	assert.EqualValues(t, resp1.BaseOffset, 0)
 
@@ -440,7 +438,7 @@ func TestBrokerConcurrentProduce(t *testing.T) {
 		go func(producerID int) {
 			defer wg.Done()
 			for j := 0; j < iterations; j++ {
-				_, err := b.Produce(context.Background(), &proto.ProduceRequest{
+				_, err := b.ProduceMessage(context.Background(), &proto.ProduceRequest{
 					TopicName:   "topic1",
 					ProducerId:  fmt.Sprintf("producer%d", producerID),
 					PartitionId: 0,
@@ -559,7 +557,7 @@ func TestBrokerConsumePersistOffset(t *testing.T) {
 	assert.True(t, resp2.LeaderAppointed)
 
 	// Now produce should succeed
-	resp1, err := b.Produce(context.Background(), &produceRequest)
+	resp1, err := b.ProduceMessage(context.Background(), &produceRequest)
 	assert.NoError(t, err)
 	assert.EqualValues(t, resp1.BaseOffset, 0)
 
@@ -570,7 +568,7 @@ func TestBrokerConsumePersistOffset(t *testing.T) {
 		ConsumerId:  consumerId,
 	}
 
-	resp, err := b.Consume(context.Background(), &consumeRequest)
+	resp, err := b.ConsumeMessage(context.Background(), &consumeRequest)
 	assert.NoError(t, err, "Consume should succeed")
 	assert.Len(t, resp.Records, len(msgs), "Should return all produced messages")
 
@@ -636,11 +634,9 @@ func TestOffsetPersist_ConsumeAllAtOnce(t *testing.T) {
 	assert.True(t, resp2.LeaderAppointed)
 
 	// Now produce should succeed
-	resp1, err := b.Produce(context.Background(), &produceRequest)
+	resp1, err := b.ProduceMessage(context.Background(), &produceRequest)
 	assert.NoError(t, err)
 	assert.EqualValues(t, resp1.BaseOffset, 0)
-
-	
 
 	consumeRequest := proto.ConsumeRequest{
 		TopicName:   topicName,
@@ -648,7 +644,7 @@ func TestOffsetPersist_ConsumeAllAtOnce(t *testing.T) {
 		ConsumerId:  consumerId,
 	}
 
-	resp, err := b.Consume(context.Background(), &consumeRequest)
+	resp, err := b.ConsumeMessage(context.Background(), &consumeRequest)
 	assert.NoError(t, err)
 	assert.Len(t, resp.Records, len(msgs))
 
@@ -690,7 +686,7 @@ func TestOffsetPersist_MultipleConsumes(t *testing.T) {
 	}
 
 	// Producing to a broker that is not leader should fail
-	_, err := b.Produce(context.Background(), &produceRequest)
+	_, err := b.ProduceMessage(context.Background(), &produceRequest)
 	assert.Error(t, err)
 
 	// Appoint broker as leader
@@ -699,7 +695,7 @@ func TestOffsetPersist_MultipleConsumes(t *testing.T) {
 	assert.True(t, resp2.LeaderAppointed)
 
 	// Now produce should succeed
-	resp1, err := b.Produce(context.Background(), &produceRequest)
+	resp1, err := b.ProduceMessage(context.Background(), &produceRequest)
 	assert.NoError(t, err)
 	assert.EqualValues(t, resp1.BaseOffset, 0)
 
@@ -710,7 +706,7 @@ func TestOffsetPersist_MultipleConsumes(t *testing.T) {
 	}
 
 	// First consume: should return all messages
-	resp, err := b.Consume(context.Background(), &consumeRequest)
+	resp, err := b.ConsumeMessage(context.Background(), &consumeRequest)
 	assert.NoError(t, err)
 	assert.Len(t, resp.Records, len(msgs))
 
@@ -718,7 +714,7 @@ func TestOffsetPersist_MultipleConsumes(t *testing.T) {
 	assert.EqualValues(t, len(msgs), offset, "Offset should match total messages consumed")
 
 	// Second consume: no new messages, offset stays the same
-	resp, err = b.Consume(context.Background(), &consumeRequest)
+	resp, err = b.ConsumeMessage(context.Background(), &consumeRequest)
 	assert.NoError(t, err)
 	assert.Len(t, resp.Records, 0)
 
@@ -762,12 +758,12 @@ func TestOffsetPersist_MultipleConsumers(t *testing.T) {
 	assert.True(t, resp2.LeaderAppointed)
 
 	// Now produce should succeed
-	resp1, err := b.Produce(context.Background(), &produceRequest)
+	resp1, err := b.ProduceMessage(context.Background(), &produceRequest)
 	assert.NoError(t, err)
 	assert.EqualValues(t, resp1.BaseOffset, 0)
 
 	// consumerA consumes all messages
-	resp, err := b.Consume(context.Background(), &proto.ConsumeRequest{
+	resp, err := b.ConsumeMessage(context.Background(), &proto.ConsumeRequest{
 		TopicName:   topicName,
 		PartitionId: partitionId,
 		ConsumerId:  consumerIdA,
@@ -778,7 +774,7 @@ func TestOffsetPersist_MultipleConsumers(t *testing.T) {
 	assert.EqualValues(t, len(msgs), offsetA)
 
 	// consumerB is a new consumer, also gets all messages from start
-	resp, err = b.Consume(context.Background(), &proto.ConsumeRequest{
+	resp, err = b.ConsumeMessage(context.Background(), &proto.ConsumeRequest{
 		TopicName:   topicName,
 		PartitionId: partitionId,
 		ConsumerId:  consumerIdB,
@@ -827,7 +823,7 @@ func TestOffsetPersist_ConcurrentConsume(t *testing.T) {
 	assert.True(t, resp2.LeaderAppointed)
 
 	// Now produce should succeed
-	resp1, err := b.Produce(context.Background(), &produceRequest)
+	resp1, err := b.ProduceMessage(context.Background(), &produceRequest)
 	assert.NoError(t, err)
 	assert.EqualValues(t, resp1.BaseOffset, 0)
 
@@ -843,7 +839,7 @@ func TestOffsetPersist_ConcurrentConsume(t *testing.T) {
 		}
 
 		for {
-			resp, err := b.Consume(context.Background(), &consumeReq)
+			resp, err := b.ConsumeMessage(context.Background(), &consumeReq)
 			assert.NoError(t, err, "Consume should not fail for consumer %s", consumerId)
 
 			// If no records returned, we've reached the end for this consumer
@@ -915,7 +911,7 @@ func TestBrokerRecovery(t *testing.T) {
 	assert.True(t, resp2.LeaderAppointed)
 
 	// Now produce should succeed
-	resp1, err := b.Produce(context.Background(), &produceRequest)
+	resp1, err := b.ProduceMessage(context.Background(), &produceRequest)
 	assert.NoError(t, err)
 	assert.EqualValues(t, resp1.BaseOffset, 0)
 
@@ -932,7 +928,7 @@ func TestBrokerRecovery(t *testing.T) {
 		ConsumerId:  consumerId,
 	}
 
-	resp, err := b2.Consume(context.Background(), &consumeRequest)
+	resp, err := b2.ConsumeMessage(context.Background(), &consumeRequest)
 	assert.NoError(t, err)
 	assert.Len(t, resp.Records, len(msgs))
 
@@ -980,7 +976,7 @@ func TestBrokerInitialization_LoadPersistedMessages(t *testing.T) {
 	assert.True(t, resp2.LeaderAppointed)
 
 	// Now produce should succeed
-	resp1, err := b.Produce(context.Background(), &produceRequest)
+	resp1, err := b.ProduceMessage(context.Background(), &produceRequest)
 	assert.NoError(t, err)
 	assert.EqualValues(t, resp1.BaseOffset, 0)
 
@@ -1043,14 +1039,13 @@ func TestBrokerInitialization_NoMessagesConsumed(t *testing.T) {
 		PartitionId: 0,
 	}
 
-
 	// Appoint broker as leader
 	resp2, err := b.AppointAsLeader(context.Background(), &apptRequest)
 	assert.NoError(t, err)
 	assert.True(t, resp2.LeaderAppointed)
 
 	// Now produce should succeed
-	resp1, err := b.Produce(context.Background(), &produceRequest)
+	resp1, err := b.ProduceMessage(context.Background(), &produceRequest)
 	assert.NoError(t, err)
 	assert.EqualValues(t, resp1.BaseOffset, 0)
 
@@ -1105,7 +1100,7 @@ func TestBrokerInitialization_AllMessagesConsumed(t *testing.T) {
 	assert.True(t, resp2.LeaderAppointed)
 
 	// Now produce should succeed
-	resp1, err := b.Produce(context.Background(), &produceRequest)
+	resp1, err := b.ProduceMessage(context.Background(), &produceRequest)
 	assert.NoError(t, err)
 	assert.EqualValues(t, resp1.BaseOffset, 0)
 
@@ -1116,7 +1111,7 @@ func TestBrokerInitialization_AllMessagesConsumed(t *testing.T) {
 		ConsumerId:  consumerId,
 	}
 
-	resp, err := b.Consume(context.Background(), &consumeRequest)
+	resp, err := b.ConsumeMessage(context.Background(), &consumeRequest)
 	assert.NoError(t, err)
 	assert.Len(t, resp.Records, len(msgs), "Should consume all messages")
 
@@ -1143,7 +1138,7 @@ func TestBrokerInitialization_AllMessagesConsumed(t *testing.T) {
 	println("Offset returned from broker:", b2.GetConsumerOffset(consumerId, topicName, partitionId))
 
 	// Step 6: Attempt to consume again; should get no new messages
-	resp, err = b2.Consume(context.Background(), &consumeRequest)
+	resp, err = b2.ConsumeMessage(context.Background(), &consumeRequest)
 	assert.NoError(t, err)
 	assert.Len(t, resp.Records, 0, "No new messages should be available")
 
@@ -1152,89 +1147,88 @@ func TestBrokerInitialization_AllMessagesConsumed(t *testing.T) {
 	assert.EqualValues(t, len(msgs), finalOffset, "Final offset should still be the same after consuming all messages")
 }
 
-
 func TestReplication(t *testing.T) {
-    persistBatch := 2
-    logger := logrus.New()
-    logger.SetLevel(logrus.DebugLevel)
-    logger.SetOutput(os.Stdout)
-    entry := logrus.NewEntry(logger)
+	persistBatch := 2
+	logger := logrus.New()
+	logger.SetLevel(logrus.DebugLevel)
+	logger.SetOutput(os.Stdout)
+	entry := logrus.NewEntry(logger)
 
-    // Create a leader broker and a replica broker in-memory
-    leader := NewMockBroker(*entry, "leader", persistBatch)
-    replica := NewMockBroker(*entry, "replica", persistBatch)
+	// Create a leader broker and a replica broker in-memory
+	leader := NewMockBroker(*entry, "leader", persistBatch)
+	replica := NewMockBroker(*entry, "replica", persistBatch)
 
-    defer func() {
-        _ = os.RemoveAll("leader")
-        _ = os.RemoveAll("replica")
-    }()
+	defer func() {
+		_ = os.RemoveAll("leader")
+		_ = os.RemoveAll("replica")
+	}()
 
-    // Configure the leader to replicate to the replica for a given topic-partition
-    topicName := "topic1"
-    partitionId := int32(0)
-    topicPartitionID := fmt.Sprintf("%s-%d", topicName, partitionId)
+	// Configure the leader to replicate to the replica for a given topic-partition
+	topicName := "topic1"
+	partitionId := int32(0)
+	topicPartitionID := fmt.Sprintf("%s-%d", topicName, partitionId)
 
-    msgs := []*proto.ProducerMessage{
-        {Key: "key1", Value: "value1"},
-        {Key: "key2", Value: "value2"},
-        {Key: "key3", Value: "value3"},
-        {Key: "key4", Value: "value4"},
-    }
+	msgs := []*proto.ProducerMessage{
+		{Key: "key1", Value: "value1"},
+		{Key: "key2", Value: "value2"},
+		{Key: "key3", Value: "value3"},
+		{Key: "key4", Value: "value4"},
+	}
 
-    BrokerInfoProtoReplica := &proto.BrokerInfoProto{
-        BrokerId: replica.BrokerInfo.BrokerName,
-        Addr:     replica.BrokerInfo.NodeAddr,
-    }
+	BrokerInfoProtoReplica := &proto.BrokerInfoProto{
+		BrokerId: replica.BrokerInfo.BrokerName,
+		Addr:     replica.BrokerInfo.NodeAddr,
+	}
 
-    apptRequest := proto.AppointmentRequest{
-        TopicName:      topicName,
-        PartitionId:    partitionId,
-        ReplicaBrokers: []*proto.BrokerInfoProto{BrokerInfoProtoReplica},
-    }
+	apptRequest := proto.AppointmentRequest{
+		TopicName:      topicName,
+		PartitionId:    partitionId,
+		ReplicaBrokers: []*proto.BrokerInfoProto{BrokerInfoProtoReplica},
+	}
 
-    produceRequest := proto.ProduceRequest{
-        TopicName:   topicName,
-        ProducerId:  "producer1",
-        PartitionId: partitionId,
-        Messages:    msgs,
-    }
+	produceRequest := proto.ProduceRequest{
+		TopicName:   topicName,
+		ProducerId:  "producer1",
+		PartitionId: partitionId,
+		Messages:    msgs,
+	}
 
-    // Appoint broker as leader
-    resp2, err := leader.AppointAsLeader(context.Background(), &apptRequest)
-    assert.NoError(t, err)
-    assert.True(t, resp2.LeaderAppointed)
+	// Appoint broker as leader
+	resp2, err := leader.AppointAsLeader(context.Background(), &apptRequest)
+	assert.NoError(t, err)
+	assert.True(t, resp2.LeaderAppointed)
 
-    // Now produce should succeed
-    resp1, err := leader.Produce(context.Background(), &produceRequest)
-    assert.NoError(t, err)
-    assert.EqualValues(t, resp1.BaseOffset, 0)
+	// Now produce should succeed
+	resp1, err := leader.ProduceMessage(context.Background(), &produceRequest)
+	assert.NoError(t, err)
+	assert.EqualValues(t, resp1.BaseOffset, 0)
 
-    // Manually replicate messages to the replica
+	// Manually replicate messages to the replica
 	consumerMsgs := convertToConsumerMessages(msgs)
-    replicateRequest := &proto.ReplicateRequest{
-        TopicName:   topicName,
-        PartitionId: partitionId,
-        Messages:    consumerMsgs,
-    }
+	replicateRequest := &proto.ReplicateRequest{
+		TopicName:   topicName,
+		PartitionId: partitionId,
+		Messages:    consumerMsgs,
+	}
 
-    _, err = replica.ReplicateMessage(context.Background(), replicateRequest)
-    assert.NoError(t, err, "Failed to replicate messages to the replica")
+	_, err = replica.ReplicateMessage(context.Background(), replicateRequest)
+	assert.NoError(t, err, "Failed to replicate messages to the replica")
 
-    // Retrieve the messages from the replica's data store
-    mapShard := replica.GetData().ShardForKey(topicPartitionID)
-    mapShard.RLock()
-    defer mapShard.RUnlock()
-    topicPartition := mapShard.Items[topicPartitionID]
+	// Retrieve the messages from the replica's data store
+	mapShard := replica.GetData().ShardForKey(topicPartitionID)
+	mapShard.RLock()
+	defer mapShard.RUnlock()
+	topicPartition := mapShard.Items[topicPartitionID]
 
-    // Assert that the replica has received all messages
-    assert.EqualValues(t, 4, len(topicPartition), "Replica should have received 4 messages")
+	// Assert that the replica has received all messages
+	assert.EqualValues(t, 4, len(topicPartition), "Replica should have received 4 messages")
 
-    // verify that the messages are correct
-    for i, msg := range msgs {
-        replicatedMsg := topicPartition[i]
-        assert.EqualValues(t, msg.Key, string(replicatedMsg.Key), "Message keys should match")
-        assert.EqualValues(t, msg.Value, string(replicatedMsg.Value), "Message values should match")
-    }
+	// verify that the messages are correct
+	for i, msg := range msgs {
+		replicatedMsg := topicPartition[i]
+		assert.EqualValues(t, msg.Key, string(replicatedMsg.Key), "Message keys should match")
+		assert.EqualValues(t, msg.Value, string(replicatedMsg.Value), "Message values should match")
+	}
 
 	// Verify that the messages are persisted to disk
 	verifyMessagesPersistedToDisk(t, replica.BrokerInfo.BrokerName, topicName, partitionId, consumerMsgs)

@@ -79,10 +79,9 @@ func NewMockBroker(logger logrus.Entry, brokerName string, persistBatch int) *Br
 		ReplicaInfo:       make(map[string][]*BrokerInfo),
 		persister:         Persister{BaseDir: brokerName, NumMessagePerBatch: persistBatch},
 		logger:            logger,
-		clientPool:     MakeClientPool(),// Initialize clientPool
+		clientPool:        MakeClientPool(), // Initialize clientPool
 	}
 
-	
 	// Load persisted offsets and messages
 	if err := broker.persister.loadConsumerOffsets(broker.consumerOffset); os.IsNotExist(err) {
 		broker.logger.Infof("No consumer offsets found on storage, starting from scratch...")
@@ -199,7 +198,7 @@ func (b *Broker) AppointAsLeader(ctx context.Context, req *proto.AppointmentRequ
 	return &proto.AppointmentResponse{LeaderAppointed: true}, nil
 }
 
-func (b *Broker) Produce(ctx context.Context, req *proto.ProduceRequest) (*proto.ProduceResponse, error) {
+func (b *Broker) ProduceMessage(ctx context.Context, req *proto.ProduceRequest) (*proto.ProduceResponse, error) {
 	b.logger.WithField("Topic", DBroker).Debugf("Received Produce request: %v", req)
 
 	partitionID := int(req.PartitionId)
@@ -296,7 +295,7 @@ func (b *Broker) Produce(ctx context.Context, req *proto.ProduceRequest) (*proto
 // Consume returns a batch of messages from a topic-partition, it checks whether the topic-partition exists in the broker's data
 // if not, it means the request is probably unauthorized/meant for another broker; then checks if there is any message to consume;
 // it creates an offset for new consumers
-func (b *Broker) Consume(ctx context.Context, req *proto.ConsumeRequest) (*proto.ConsumeResponse, error) {
+func (b *Broker) ConsumeMessage(ctx context.Context, req *proto.ConsumeRequest) (*proto.ConsumeResponse, error) {
 	b.logger.WithField("Topic", DBroker).Debugf("Received Consume request: %v", req)
 
 	topicPartitionID := fmt.Sprintf("%s-%d", req.TopicName, req.PartitionId)
