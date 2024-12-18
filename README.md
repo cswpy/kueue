@@ -20,6 +20,17 @@ To run all broker and controller and test heartbeat,
 ./scripts/test_heartbeat.sh
 ```
 This will run all of them at the same time and peridically test heartbeat from each brokers
+
+The producer and consumer client APIs are located in the `pkg` folder. You can run integration tests for the producer and consumer APIs using the following commands:
+```
+# Run producer-only integration tests
+go test ./pkg/producer -v 
+
+# Run both producer and consumer integration tests
+go test ./pkg/consumer -v
+```
+Make sure all dependencies are installed and the required services (controller and broker) are running before executing the tests.
+
 ## Compiling protobuf
 
 Install all required dependencies by running `go mod tidy`, then run `Makefile` after updating the proto files.
@@ -60,7 +71,10 @@ Install all required dependencies by running `go mod tidy`, then run `Makefile` 
 │   │   ├── controller.proto
 │   │   └── controller_grpc.pb.go
 │   └── utils.go
+├── kueue_writeup.pdf
+├── lit_review_evan.pdf
 ├── lit_review_pengyu.pdf
+├── lit_review_yizheng.pdf
 ├── pkg                     // consumer/producer client API
 │   ├── consumer
 │   │   ├── consumer.go
