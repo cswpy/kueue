@@ -346,6 +346,7 @@ func (b *Broker) Consume(ctx context.Context, req *proto.ConsumeRequest) (*proto
 	return resp, nil
 }
 
+// ReplicateMessage SHOULD NOT persist data into storage, because we are assuming storage is always available globally
 func (b *Broker) ReplicateMessage(ctx context.Context, req *proto.ReplicateRequest) (*proto.ReplicateResponse, error) {
 	b.logger.WithField("Topic", DBroker).Debugf("Received ReplicateMessage request: %v", req)
 
